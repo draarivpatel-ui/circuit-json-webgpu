@@ -1,5 +1,6 @@
 import { compileCircuitJsonWithCopperPourCache } from "./compile-circuit"
 import { CopperPourTriangulations } from "./copper-pour-triangulations"
+import { LayerStrokes } from "./layer-strokes"
 import { normalizeLayer } from "./colors"
 import { compositeShader, geometryShader } from "./shaders"
 import type {
@@ -8,6 +9,7 @@ import type {
   DrawerOptions,
   Matrix,
   Mesh,
+  Point,
   RenderOptions,
 } from "./types"
 
@@ -63,6 +65,12 @@ export class CircuitToWebGpuDrawer {
   private paintPipeline: GPURenderPipeline
   private erasePipeline: GPURenderPipeline
   private compositePipeline: GPURenderPipeline
+  private layerStrokes?: LayerStrokes
+  private visibleLayers: {
+    name: string
+    texture: GPUTexture
+    opacity: number
+  }[] = []
   private sampler: GPUSampler
   private options: RenderOptions = {}
 
@@ -417,6 +425,15 @@ export class CircuitToWebGpuDrawer {
       ...visible.map((layer) => ({ layer, xRay: false })),
       ...selectedLayers.map((layer) => ({ layer, xRay: true })),
     ]
+    if (o.layerStrokes?.length)
+      this.layerStrokes ??= new LayerStrokes(
+        this.device,
+        this.uniform,
+        this.config.sampleCount ?? 4,
+        over,
+      )
+    this.layerStrokes?.set(o.layerStrokes)
+    this.visibleLayers = []
     const encoder = this.device.createCommandEncoder()
     const drillText = visible.filter((layer) =>
       layer.name.endsWith("_silkscreen_text"),
@@ -440,6 +457,8 @@ export class CircuitToWebGpuDrawer {
         [layer.paint, this.paintPipeline],
         [layer.erase, this.erasePipeline],
       ] as const) {
+        if (pipeline === this.erasePipeline && !xRayActive)
+          this.layerStrokes?.draw(pass, layer.name)
         if (!mesh.count) continue
         // Erase geometry (drills/cutouts) must retain its physical meaning in both passes.
         pass.setBindGroup(
@@ -457,15 +476,21 @@ export class CircuitToWebGpuDrawer {
       const text = this.isDrill(layer.name) && !xRay ? drillText : []
       if (this.isDrill(layer.name))
         layer.composite = this.createComposite(layer, text)
+      const opacity = xRay
+        ? 1
+        : xRayActive && this.isCopper(layer.name)
+          ? Math.max(0, Math.min(1, o.hiddenLayerOpacity ?? 0.4))
+          : this.opacity(layer.name, selected, o.hiddenLayerOpacity ?? 0.4)
+      this.visibleLayers.push({
+        name: layer.name,
+        texture: layer.texture!,
+        opacity,
+      })
       this.device.queue.writeBuffer(
         layer.opacity,
         0,
         new Float32Array([
-          xRay
-            ? 1
-            : xRayActive && this.isCopper(layer.name)
-              ? Math.max(0, Math.min(1, o.hiddenLayerOpacity ?? 0.4))
-              : this.opacity(layer.name, selected, o.hiddenLayerOpacity ?? 0.4),
+          opacity,
           text[0]
             ? this.opacity(text[0].name, selected, o.hiddenLayerOpacity ?? 0.4)
             : 0,
@@ -494,6 +519,50 @@ export class CircuitToWebGpuDrawer {
     pass.end()
     this.device.queue.submit([encoder.finish()])
     this.stats.frames++
+  }
+
+  /** Pick the foremost candidate layer at a canvas pixel, accounting for opaque paint above it. */
+  async pickLayerAt(
+    point: Point,
+    candidates: readonly string[],
+  ): Promise<string | undefined> {
+    this.assertLive()
+    const x = Math.floor(point.x)
+    const y = Math.floor(point.y)
+    if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height)
+      return
+    const names = new Set(candidates.map(normalizeLayer))
+    const index = this.visibleLayers.findLastIndex(({ name }) =>
+      names.has(name),
+    )
+    if (index < 0) return
+    const name = this.visibleLayers[index].name
+    const above = this.visibleLayers
+      .slice(index + 1)
+      .filter(({ opacity }) => opacity === 1)
+    if (!above.length) return name
+
+    const buffer = this.device.createBuffer({
+      size: above.length * 4,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    })
+    try {
+      const encoder = this.device.createCommandEncoder()
+      for (const [index, { texture }] of above.entries())
+        encoder.copyTextureToBuffer(
+          { texture, origin: { x, y } },
+          { buffer, offset: index * 4 },
+          [1, 1],
+        )
+      this.device.queue.submit([encoder.finish()])
+      await buffer.mapAsync(GPUMapMode.READ)
+      const rgba = new Uint8Array(buffer.getMappedRange())
+      return above.some((_, index) => rgba[index * 4 + 3] === 255)
+        ? undefined
+        : name
+    } finally {
+      buffer.destroy()
+    }
   }
 
   async flush() {
@@ -586,7 +655,9 @@ export class CircuitToWebGpuDrawer {
       size: [width, height],
       format: "rgba8unorm",
       usage:
-        GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_SRC,
     })
     layer.composite = this.createComposite(layer)
   }
@@ -613,6 +684,7 @@ export class CircuitToWebGpuDrawer {
       throw new Error(this.lost ? "WebGPU device lost" : "Renderer disposed")
   }
   private releaseLayers() {
+    this.visibleLayers = []
     for (const layer of this.xRayLayers) {
       layer.opacity.destroy()
       layer.texture?.destroy()
@@ -632,6 +704,7 @@ export class CircuitToWebGpuDrawer {
     if (this.disposed) return
     this.disposed = true
     this.releaseLayers()
+    this.layerStrokes?.dispose()
     this.sample?.destroy()
     this.uniform.destroy()
     this.xRayUniform.destroy()

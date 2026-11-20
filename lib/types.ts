@@ -10,7 +10,23 @@ export type Matrix = {
   f: number
 }
 export type Color = readonly [number, number, number, number]
+/** A round stroke painted on top of the geometry for an existing layer. */
+export type LayerStroke = {
+  layer: string
+  start: Point
+  end: Point
+  width: number
+  /** Minimum width in canvas pixels. */
+  minWidthPixels?: number
+  /** Extra canvas pixels added after applying the minimum, for an outset stroke. */
+  extraWidthPixels?: number
+  /** Cap the stroke in board units. An outset that cannot expand is skipped. */
+  maxWidth?: number
+  color: Color
+}
 export type RenderOptions = {
+  /** Draw in array order, before layer erasures and compositing. Reuse the array while the strokes are unchanged. */
+  layerStrokes?: readonly LayerStroke[]
   transform?: Matrix
   layers?: readonly string[]
   selectedLayer?: string
