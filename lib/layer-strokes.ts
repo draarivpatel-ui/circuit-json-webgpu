@@ -1,6 +1,18 @@
 import { normalizeLayer } from "./colors"
 import type { LayerStroke } from "./types"
 
+/** Each stroke is one instance of 12 floats: endpoints, widths, colour. */
+const FLOATS_PER_STROKE = 12
+const BYTES_PER_FLOAT = 4
+/** Floats before each vec4 attribute within a stroke. */
+const ENDPOINTS_OFFSET_FLOATS = 0
+const WIDTHS_OFFSET_FLOATS = 4
+const COLOR_OFFSET_FLOATS = 8
+/** Stands in for "no maximum" in board units: wider than any canvas. */
+const UNCAPPED_MAX_WIDTH = 1e20
+/** Lengths below this are treated as zero, so a dot still gets a direction. */
+const MIN_LENGTH = 1e-6
+
 const strokeShader = /* wgsl */ `
 struct Camera { rowX: vec4f, rowY: vec4f, viewport: vec4f }
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -11,8 +23,12 @@ struct VertexOut {
   @location(2) @interpolate(flat) radius: f32,
   @location(3) @interpolate(flat) color: vec4f,
 }
+const MIN_LENGTH = ${MIN_LENGTH};
 fn project(p: vec2f) -> vec2f {
   return vec2f(dot(camera.rowX.xyz, vec3f(p, 1)), dot(camera.rowY.xyz, vec3f(p, 1)));
+}
+fn direction(delta: vec2f) -> vec2f {
+  return select(vec2f(1, 0), delta / max(length(delta), MIN_LENGTH), length(delta) > MIN_LENGTH);
 }
 @vertex fn vertexMain(
   @builtin(vertex_index) vertex: u32,
@@ -25,12 +41,15 @@ fn project(p: vec2f) -> vec2f {
   let corner = corners[vertex];
   let start = project(endpoints.xy);
   let end = project(endpoints.zw);
-  let delta = end - start;
-  let tangent = select(vec2f(1, 0), delta / max(length(delta), 1e-6), length(delta) > 1e-6);
+  let tangent = direction(end - start);
   let normal = vec2f(-tangent.y, tangent.x);
-  let scale = length(vec2f(camera.rowX.x, camera.rowY.x));
-  let base = max(widths.x * scale, widths.y);
-  let width = min(base + widths.z, widths.w * scale);
+  // Canvas pixels per board unit across the stroke: |det A| / |A t| for the
+  // board direction t, so a non-uniform transform keeps the board width.
+  let linear = mat2x2f(camera.rowX.x, camera.rowY.x, camera.rowX.y, camera.rowY.y);
+  let boardTangent = direction(endpoints.zw - endpoints.xy);
+  let across = abs(determinant(linear)) / max(length(linear * boardTangent), MIN_LENGTH);
+  let base = max(widths.x * across, widths.y);
+  let width = min(base + widths.z, widths.w * across);
   let radius = width * 0.5;
   let pixel = mix(start, end, corner.x) + (tangent * (2 * corner.x - 1) + normal * corner.y) * (radius + 1);
   let ndc = pixel / camera.viewport.xy * vec2f(2, -2) + vec2f(-1, 1);
@@ -40,26 +59,55 @@ fn project(p: vec2f) -> vec2f {
 @fragment fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   let offset = in.pixel - in.endpoints.xy;
   let delta = in.endpoints.zw - in.endpoints.xy;
-  let nearest = clamp(dot(offset, delta) / max(dot(delta, delta), 1e-6), 0, 1);
+  let nearest = clamp(dot(offset, delta) / max(dot(delta, delta), MIN_LENGTH), 0, 1);
   let coverage = clamp(in.radius - length(offset - nearest * delta) + 0.5, 0, 1);
   let alpha = in.color.a * coverage;
   return vec4f(in.color.rgb * alpha, alpha);
 }
 `
 
+/** Counts each time stroke buffers are rebuilt and uploaded. */
+export type StrokeStats = { strokeUploads: number }
+
+/**
+ * Per-layer stroke buffers, drawn inside each layer's paint pass. Buffers
+ * are rebuilt only when a different stroke array is set. Widths are kept
+ * across the stroke under any affine transform; round caps are circles on
+ * the canvas.
+ */
 export class LayerStrokes {
+  private device: GPUDevice
+  private uniform: GPUBuffer
+  private sampleCount: number
+  private blend: GPUBlendState
+  private stats: StrokeStats
   private pipeline?: GPURenderPipeline
   private camera?: GPUBindGroup
   private strokes?: readonly LayerStroke[]
   private buffers = new Map<string, { buffer: GPUBuffer; count: number }>()
 
-  constructor(
-    private device: GPUDevice,
-    private uniform: GPUBuffer,
-    private sampleCount: number,
-    private blend: GPUBlendState,
-  ) {}
+  constructor({
+    device,
+    uniform,
+    sampleCount,
+    blend,
+    stats,
+  }: {
+    device: GPUDevice
+    /** The drawer's camera uniform. */
+    uniform: GPUBuffer
+    sampleCount: number
+    blend: GPUBlendState
+    stats: StrokeStats
+  }) {
+    this.device = device
+    this.uniform = uniform
+    this.sampleCount = sampleCount
+    this.blend = blend
+    this.stats = stats
+  }
 
+  /** Uses `strokes` from now on; the same array keeps the uploaded buffers. */
   set(strokes?: readonly LayerStroke[]) {
     if (strokes === this.strokes) return
     this.dispose()
@@ -70,33 +118,17 @@ export class LayerStrokes {
     for (const stroke of strokes) {
       const name = normalizeLayer(stroke.layer)
       const group = groups.get(name)
-      if (group) group.push(stroke)
-      else groups.set(name, [stroke])
+      if (group) {
+        group.push(stroke)
+        continue
+      }
+      groups.set(name, [stroke])
     }
     for (const [layer, lines] of groups) {
-      const vertices = Float32Array.from(
-        lines.flatMap(
-          ({
-            start,
-            end,
-            width,
-            minWidthPixels,
-            extraWidthPixels,
-            maxWidth,
-            color,
-          }) => [
-            start.x,
-            start.y,
-            end.x,
-            end.y,
-            width,
-            minWidthPixels ?? 0,
-            extraWidthPixels ?? 0,
-            maxWidth ?? 1e20,
-            ...color,
-          ],
-        ),
-      )
+      const vertices = new Float32Array(lines.length * FLOATS_PER_STROKE)
+      lines.forEach((stroke, index) => {
+        vertices.set(strokeFloats(stroke), index * FLOATS_PER_STROKE)
+      })
       const buffer = this.device.createBuffer({
         size: vertices.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -104,9 +136,11 @@ export class LayerStrokes {
       this.device.queue.writeBuffer(buffer, 0, vertices)
       this.buffers.set(layer, { buffer, count: lines.length })
     }
+    this.stats.strokeUploads++
   }
 
-  draw(pass: GPURenderPassEncoder, layer: string) {
+  /** Draws the strokes of `layer` into `pass`, if it has any. */
+  draw({ pass, layer }: { pass: GPURenderPassEncoder; layer: string }) {
     const strokes = this.buffers.get(layer)
     if (!strokes) return
     if (!this.pipeline) {
@@ -118,12 +152,24 @@ export class LayerStrokes {
           entryPoint: "vertexMain",
           buffers: [
             {
-              arrayStride: 48,
+              arrayStride: FLOATS_PER_STROKE * BYTES_PER_FLOAT,
               stepMode: "instance",
               attributes: [
-                { shaderLocation: 0, offset: 0, format: "float32x4" },
-                { shaderLocation: 1, offset: 16, format: "float32x4" },
-                { shaderLocation: 2, offset: 32, format: "float32x4" },
+                {
+                  shaderLocation: 0,
+                  offset: ENDPOINTS_OFFSET_FLOATS * BYTES_PER_FLOAT,
+                  format: "float32x4",
+                },
+                {
+                  shaderLocation: 1,
+                  offset: WIDTHS_OFFSET_FLOATS * BYTES_PER_FLOAT,
+                  format: "float32x4",
+                },
+                {
+                  shaderLocation: 2,
+                  offset: COLOR_OFFSET_FLOATS * BYTES_PER_FLOAT,
+                  format: "float32x4",
+                },
               ],
             },
           ],
@@ -146,8 +192,26 @@ export class LayerStrokes {
     pass.draw(6, strokes.count)
   }
 
+  /** Destroys the uploaded buffers. */
   dispose() {
     for (const { buffer } of this.buffers.values()) buffer.destroy()
     this.buffers.clear()
   }
+}
+
+/** One stroke's instance floats, in the order the shader's attributes read them. */
+function strokeFloats(stroke: LayerStroke): number[] {
+  const floats = new Array<number>(FLOATS_PER_STROKE)
+  floats[ENDPOINTS_OFFSET_FLOATS] = stroke.start.x
+  floats[ENDPOINTS_OFFSET_FLOATS + 1] = stroke.start.y
+  floats[ENDPOINTS_OFFSET_FLOATS + 2] = stroke.end.x
+  floats[ENDPOINTS_OFFSET_FLOATS + 3] = stroke.end.y
+  floats[WIDTHS_OFFSET_FLOATS] = stroke.width
+  floats[WIDTHS_OFFSET_FLOATS + 1] = stroke.minWidthPixels ?? 0
+  floats[WIDTHS_OFFSET_FLOATS + 2] = stroke.extraWidthPixels ?? 0
+  floats[WIDTHS_OFFSET_FLOATS + 3] = stroke.maxWidth ?? UNCAPPED_MAX_WIDTH
+  for (let channel = 0; channel < 4; channel++) {
+    floats[COLOR_OFFSET_FLOATS + channel] = stroke.color[channel]
+  }
+  return floats
 }

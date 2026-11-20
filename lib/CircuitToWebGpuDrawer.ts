@@ -41,6 +41,8 @@ export class CircuitToWebGpuDrawer {
     triangleCount: 0,
     compileMs: 0,
     vertexBytes: 0,
+    /** Times `layerStrokes` buffers were rebuilt; a reused array uploads nothing. */
+    strokeUploads: 0,
   }
   private circuit?: CircuitJson
   private scene?: {
@@ -425,13 +427,15 @@ export class CircuitToWebGpuDrawer {
       ...visible.map((layer) => ({ layer, xRay: false })),
       ...selectedLayers.map((layer) => ({ layer, xRay: true })),
     ]
-    if (o.layerStrokes?.length)
-      this.layerStrokes ??= new LayerStrokes(
-        this.device,
-        this.uniform,
-        this.config.sampleCount ?? 4,
-        over,
-      )
+    if (o.layerStrokes?.length) {
+      this.layerStrokes ??= new LayerStrokes({
+        device: this.device,
+        uniform: this.uniform,
+        sampleCount: this.config.sampleCount ?? 4,
+        blend: over,
+        stats: this.stats,
+      })
+    }
     this.layerStrokes?.set(o.layerStrokes)
     this.visibleLayers = []
     const encoder = this.device.createCommandEncoder()
@@ -458,7 +462,7 @@ export class CircuitToWebGpuDrawer {
         [layer.erase, this.erasePipeline],
       ] as const) {
         if (pipeline === this.erasePipeline && !xRayActive)
-          this.layerStrokes?.draw(pass, layer.name)
+          this.layerStrokes?.draw({ pass, layer: layer.name })
         if (!mesh.count) continue
         // Erase geometry (drills/cutouts) must retain its physical meaning in both passes.
         pass.setBindGroup(
@@ -476,11 +480,13 @@ export class CircuitToWebGpuDrawer {
       const text = this.isDrill(layer.name) && !xRay ? drillText : []
       if (this.isDrill(layer.name))
         layer.composite = this.createComposite(layer, text)
-      const opacity = xRay
-        ? 1
-        : xRayActive && this.isCopper(layer.name)
-          ? Math.max(0, Math.min(1, o.hiddenLayerOpacity ?? 0.4))
-          : this.opacity(layer.name, selected, o.hiddenLayerOpacity ?? 0.4)
+      const opacity = this.compositeOpacity({
+        name: layer.name,
+        xRay,
+        xRayActive,
+        selected,
+        hiddenLayerOpacity: o.hiddenLayerOpacity ?? 0.4,
+      })
       this.visibleLayers.push({
         name: layer.name,
         texture: layer.texture!,
@@ -521,11 +527,41 @@ export class CircuitToWebGpuDrawer {
     this.stats.frames++
   }
 
-  /** Pick the foremost candidate layer at a canvas pixel, accounting for opaque paint above it. */
-  async pickLayerAt(
-    point: Point,
-    candidates: readonly string[],
-  ): Promise<string | undefined> {
+  /** A layer's composite opacity: X-ray copper is opaque, other copper in X-ray uses the hidden-layer opacity. */
+  private compositeOpacity({
+    name,
+    xRay,
+    xRayActive,
+    selected,
+    hiddenLayerOpacity,
+  }: {
+    name: string
+    xRay: boolean
+    xRayActive: boolean
+    selected: string
+    hiddenLayerOpacity: number
+  }): number {
+    if (xRay) return 1
+    if (xRayActive && this.isCopper(name)) {
+      return Math.max(0, Math.min(1, hiddenLayerOpacity))
+    }
+    return this.opacity(name, selected, hiddenLayerOpacity)
+  }
+
+  /**
+   * The foremost of `candidates` at a canvas pixel in the last frame, or
+   * undefined when a fully opaque layer above it has opaque paint there.
+   * The caller decides which layers have geometry at the pixel, including
+   * clipping and any hover slack; this checks only layer order and the
+   * paint of opaque layers above. Translucent layers never block.
+   */
+  async pickLayerAt({
+    point,
+    candidates,
+  }: {
+    point: Point
+    candidates: readonly string[]
+  }): Promise<string | undefined> {
     this.assertLive()
     const x = Math.floor(point.x)
     const y = Math.floor(point.y)
@@ -557,9 +593,8 @@ export class CircuitToWebGpuDrawer {
       this.device.queue.submit([encoder.finish()])
       await buffer.mapAsync(GPUMapMode.READ)
       const rgba = new Uint8Array(buffer.getMappedRange())
-      return above.some((_, index) => rgba[index * 4 + 3] === 255)
-        ? undefined
-        : name
+      if (above.some((_, index) => rgba[index * 4 + 3] === 255)) return
+      return name
     } finally {
       buffer.destroy()
     }
