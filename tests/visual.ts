@@ -7,6 +7,7 @@ import { PNG } from "pngjs"
 import { Resvg } from "@resvg/resvg-js"
 import { createCanvas } from "@napi-rs/canvas"
 import { convertCircuitJsonToPcbSvg } from "circuit-to-svg"
+import { convertCircuitJsonToPcbSvg as convertPhaseSkewSvg } from "circuit-to-svg-phase-skew"
 import { drawPcbCopperPour } from "circuit-to-canvas/lib/drawer/elements/pcb-copper-pour"
 import { DEFAULT_PCB_COLOR_MAP } from "circuit-to-canvas/lib/drawer/types"
 import pixelmatch from "pixelmatch"
@@ -492,7 +493,10 @@ try {
         `Default pour color must match Canvas on ${background}: ${actual} vs ${expected}`,
       )
     }
-    const svg = convertCircuitJsonToPcbSvg([...pours.elements], {
+    const svgElements = [...pours.elements] as Parameters<
+      typeof convertCircuitJsonToPcbSvg
+    >[0]
+    const svg = convertCircuitJsonToPcbSvg(svgElements, {
       width: 200,
       height: 200,
       viewport: { minX: -10, minY: -10, maxX: 10, maxY: 10 },
@@ -840,8 +844,8 @@ try {
       },
       scene,
     )
-    const svg = convertCircuitJsonToPcbSvg(
-      scene.elements as Parameters<typeof convertCircuitJsonToPcbSvg>[0],
+    const svg = convertPhaseSkewSvg(
+      scene.elements as Parameters<typeof convertPhaseSkewSvg>[0],
       {
         width: scene.width,
         height: scene.height,
