@@ -12,8 +12,8 @@ const WIDTH_OFFSET_FLOATS = 8
 const MIN_BOARD_DIRECTION_LENGTH_MM = 1e-6
 /** Canvas vectors shorter than this are treated as zero length. */
 const MIN_CANVAS_DIRECTION_LENGTH_PIXELS = 1e-6
-/** Canvas segments with a squared length below this are dots. */
-const MIN_CANVAS_SEGMENT_LENGTH_PIXELS_SQUARED = 1e-6
+/** Points along the stroke at which a pixel's coverage is averaged. */
+const COVERAGE_SAMPLES_ALONG = 8
 
 /** A layer name after `normalizeLayer`, as the drawer names its layer passes. */
 type RenderLayerName = string
@@ -30,7 +30,7 @@ struct VertexOut {
 }
 const MIN_BOARD_DIRECTION_LENGTH_MM = ${MIN_BOARD_DIRECTION_LENGTH_MM};
 const MIN_CANVAS_DIRECTION_LENGTH_PIXELS = ${MIN_CANVAS_DIRECTION_LENGTH_PIXELS};
-const MIN_CANVAS_SEGMENT_LENGTH_PIXELS_SQUARED = ${MIN_CANVAS_SEGMENT_LENGTH_PIXELS_SQUARED};
+const COVERAGE_SAMPLES_ALONG = ${COVERAGE_SAMPLES_ALONG};
 fn project(p: vec2f) -> vec2f {
   return vec2f(dot(camera.rowX.xyz, vec3f(p, 1)), dot(camera.rowY.xyz, vec3f(p, 1)));
 }
@@ -38,6 +38,12 @@ fn project(p: vec2f) -> vec2f {
 // a 1 px box around a pixel lies within a span, along one axis.
 fn boxOverlap(center: f32, low: f32, high: f32) -> f32 {
   return clamp(min(center + 0.5, high) - max(center - 0.5, low), 0, 1);
+}
+// Half the stroke's width at a distance along it from its start, in
+// canvas pixels: the radius along the segment, narrowing round each cap.
+fn capsuleHalfWidth(alongPixels: f32, lengthPixels: f32, radius: f32) -> f32 {
+  let beyondEnd = max(max(-alongPixels, alongPixels - lengthPixels), 0);
+  return sqrt(max(radius * radius - beyondEnd * beyondEnd, 0));
 }
 fn direction(delta: vec2f, minLength: f32) -> vec2f {
   return select(vec2f(1, 0), delta / max(length(delta), minLength), length(delta) > minLength);
@@ -69,23 +75,20 @@ fn direction(delta: vec2f, minLength: f32) -> vec2f {
 @fragment fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   let offset = in.pixel - in.endpoints.xy;
   let delta = in.endpoints.zw - in.endpoints.xy;
-  let nearestSegmentFraction = clamp(dot(offset, delta) / max(dot(delta, delta), MIN_CANVAS_SEGMENT_LENGTH_PIXELS_SQUARED), 0, 1);
-  // The share of a 1 px box around the pixel within the stroke, measured
-  // from the nearest point of the segment: this keeps the caps round on
-  // wide strokes and fades coverage to zero with the width.
-  let distancePixels = length(offset - nearestSegmentFraction * delta);
-  let radialCoverage = boxOverlap(distancePixels, -in.radius, in.radius);
-  // Near a thin stroke's ends only part of the box lies along the stroke,
-  // so also bound coverage by its overlap with the stroke's bounding box
-  // across and along it. Away from the ends both measures agree.
+  // The share of a 1 px box around the pixel, in the stroke's own frame,
+  // that lies within the stroke: the overlap across the stroke, averaged at
+  // points along it, so round caps and short pieces get only their area.
   let segmentLengthPixels = length(delta);
   let tangent = direction(delta, MIN_CANVAS_DIRECTION_LENGTH_PIXELS);
   let alongPixels = dot(offset, tangent);
   let acrossPixels = dot(offset, vec2f(-tangent.y, tangent.x));
-  let boundingBoxCoverage =
-    boxOverlap(alongPixels, -in.radius, segmentLengthPixels + in.radius) *
-    boxOverlap(acrossPixels, -in.radius, in.radius);
-  let coverage = min(radialCoverage, boundingBoxCoverage);
+  var coverage = 0.0;
+  for (var sample = 0; sample < COVERAGE_SAMPLES_ALONG; sample++) {
+    let sampleAlongPixels = alongPixels - 0.5 + (f32(sample) + 0.5) / f32(COVERAGE_SAMPLES_ALONG);
+    let halfWidth = capsuleHalfWidth(sampleAlongPixels, segmentLengthPixels, in.radius);
+    coverage += boxOverlap(acrossPixels, -halfWidth, halfWidth);
+  }
+  coverage /= f32(COVERAGE_SAMPLES_ALONG);
   let alpha = in.color.a * coverage;
   return vec4f(in.color.rgb * alpha, alpha);
 }
