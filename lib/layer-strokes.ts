@@ -34,6 +34,11 @@ const MIN_CANVAS_SEGMENT_LENGTH_PIXELS_SQUARED = ${MIN_CANVAS_SEGMENT_LENGTH_PIX
 fn project(p: vec2f) -> vec2f {
   return vec2f(dot(camera.rowX.xyz, vec3f(p, 1)), dot(camera.rowY.xyz, vec3f(p, 1)));
 }
+// The length of [center - 0.5, center + 0.5] inside [low, high]: how much of
+// a 1 px box around a pixel lies within a span, along one axis.
+fn boxOverlap(center: f32, low: f32, high: f32) -> f32 {
+  return clamp(min(center + 0.5, high) - max(center - 0.5, low), 0, 1);
+}
 fn direction(delta: vec2f, minLength: f32) -> vec2f {
   return select(vec2f(1, 0), delta / max(length(delta), minLength), length(delta) > minLength);
 }
@@ -65,10 +70,22 @@ fn direction(delta: vec2f, minLength: f32) -> vec2f {
   let offset = in.pixel - in.endpoints.xy;
   let delta = in.endpoints.zw - in.endpoints.xy;
   let nearestSegmentFraction = clamp(dot(offset, delta) / max(dot(delta, delta), MIN_CANVAS_SEGMENT_LENGTH_PIXELS_SQUARED), 0, 1);
-  // The share of a 1 px box around the pixel that lies within the stroke
-  // across it, so coverage fades to zero with the stroke's width.
+  // The share of a 1 px box around the pixel within the stroke, measured
+  // from the nearest point of the segment: this keeps the caps round on
+  // wide strokes and fades coverage to zero with the width.
   let distancePixels = length(offset - nearestSegmentFraction * delta);
-  let coverage = clamp(min(distancePixels + 0.5, in.radius) - max(distancePixels - 0.5, -in.radius), 0, 1);
+  let radialCoverage = boxOverlap(distancePixels, -in.radius, in.radius);
+  // Near a thin stroke's ends only part of the box lies along the stroke,
+  // so also bound coverage by its overlap with the stroke's bounding box
+  // across and along it. Away from the ends both measures agree.
+  let segmentLengthPixels = length(delta);
+  let tangent = direction(delta, MIN_CANVAS_DIRECTION_LENGTH_PIXELS);
+  let alongPixels = dot(offset, tangent);
+  let acrossPixels = dot(offset, vec2f(-tangent.y, tangent.x));
+  let boundingBoxCoverage =
+    boxOverlap(alongPixels, -in.radius, segmentLengthPixels + in.radius) *
+    boxOverlap(acrossPixels, -in.radius, in.radius);
+  let coverage = min(radialCoverage, boundingBoxCoverage);
   let alpha = in.color.a * coverage;
   return vec4f(in.color.rgb * alpha, alpha);
 }
