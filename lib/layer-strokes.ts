@@ -59,15 +59,16 @@ fn direction(delta: vec2f, minLength: f32) -> vec2f {
   let radius = strokeWidthPixels * 0.5;
   let pixel = mix(start, end, corner.x) + (tangent * (2 * corner.x - 1) + normal * corner.y) * (radius + 1);
   let ndc = pixel / camera.viewport.xy * vec2f(2, -2) + vec2f(-1, 1);
-  // Antialiasing would otherwise give a zero-width stroke a 1 px line.
-  let isVisible = strokeWidthPixels > 0;
-  return VertexOut(vec4f(ndc, 0, 1), pixel, vec4f(start, end), radius, select(vec4f(0), color, isVisible));
+  return VertexOut(vec4f(ndc, 0, 1), pixel, vec4f(start, end), radius, color);
 }
 @fragment fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   let offset = in.pixel - in.endpoints.xy;
   let delta = in.endpoints.zw - in.endpoints.xy;
   let nearestSegmentFraction = clamp(dot(offset, delta) / max(dot(delta, delta), MIN_CANVAS_SEGMENT_LENGTH_PIXELS_SQUARED), 0, 1);
-  let coverage = clamp(in.radius - length(offset - nearestSegmentFraction * delta) + 0.5, 0, 1);
+  // The share of a 1 px box around the pixel that lies within the stroke
+  // across it, so coverage fades to zero with the stroke's width.
+  let distancePixels = length(offset - nearestSegmentFraction * delta);
+  let coverage = clamp(min(distancePixels + 0.5, in.radius) - max(distancePixels - 0.5, -in.radius), 0, 1);
   let alpha = in.color.a * coverage;
   return vec4f(in.color.rgb * alpha, alpha);
 }
