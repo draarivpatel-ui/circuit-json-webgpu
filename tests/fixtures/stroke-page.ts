@@ -22,7 +22,7 @@ export const BOTTOM_LINE: Omit<LayerStroke, "color"> = {
   layer: "bottom",
   start: { x: -3, y: 0 },
   end: { x: 3, y: 0 },
-  width: 0.5,
+  widthMm: 0.5,
 }
 
 /** Opens the test site in WebGPU Chromium. */
