@@ -15,14 +15,8 @@ export type LayerStroke = {
   layer: string
   start: Point
   end: Point
-  /** Width on the board, in mm. */
+  /** Width on the board, in mm. A zero-width stroke paints nothing. */
   widthMm: number
-  /** Minimum width in canvas pixels. */
-  minWidthPixels?: number
-  /** Extra canvas pixels added after applying the minimum, for an outset stroke. */
-  extraWidthPixels?: number
-  /** Maximum width on the board, in mm. An outset that cannot expand is skipped. */
-  maxWidthMm?: number
   color: Color
 }
 export type RenderOptions = {

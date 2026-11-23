@@ -1,15 +1,13 @@
 import { normalizeLayer } from "./colors"
 import type { LayerStroke } from "./types"
 
-/** Each stroke is one instance of 12 floats: endpoints, widths, colour. */
-const FLOATS_PER_STROKE = 12
+/** Each stroke is one instance of 9 floats: endpoints, colour, width. */
+const FLOATS_PER_STROKE = 9
 const BYTES_PER_FLOAT = 4
-/** Floats before each vec4 attribute within a stroke. */
+/** Floats before each attribute within a stroke. */
 const ENDPOINTS_OFFSET_FLOATS = 0
-const WIDTHS_OFFSET_FLOATS = 4
-const COLOR_OFFSET_FLOATS = 8
-/** Stands in for "no maximum width" in mm: wider than any canvas. */
-const UNBOUNDED_WIDTH_SENTINEL_MM = 1e20
+const COLOR_OFFSET_FLOATS = 4
+const WIDTH_OFFSET_FLOATS = 8
 /** Board segments shorter than this are dots, so they still get a direction. */
 const MIN_BOARD_DIRECTION_LENGTH_MM = 1e-6
 /** Canvas vectors shorter than this are treated as zero length. */
@@ -42,8 +40,8 @@ fn direction(delta: vec2f, minLength: f32) -> vec2f {
 @vertex fn vertexMain(
   @builtin(vertex_index) vertex: u32,
   @location(0) endpoints: vec4f,
-  @location(1) widths: vec4f,
-  @location(2) color: vec4f,
+  @location(1) color: vec4f,
+  @location(2) widthMm: f32,
 ) -> VertexOut {
   let corners = array<vec2f, 6>(vec2f(0,-1), vec2f(1,-1), vec2f(0,1),
                                vec2f(0,1), vec2f(1,-1), vec2f(1,1));
@@ -57,13 +55,13 @@ fn direction(delta: vec2f, minLength: f32) -> vec2f {
   let linear = mat2x2f(camera.rowX.x, camera.rowY.x, camera.rowX.y, camera.rowY.y);
   let boardTangent = direction(endpoints.zw - endpoints.xy, MIN_BOARD_DIRECTION_LENGTH_MM);
   let pixelsPerMmAcrossStroke = abs(determinant(linear)) / max(length(linear * boardTangent), MIN_CANVAS_DIRECTION_LENGTH_PIXELS);
-  let baseWidthPixels = max(widths.x * pixelsPerMmAcrossStroke, widths.y);
-  let strokeWidthPixels = min(baseWidthPixels + widths.z, widths.w * pixelsPerMmAcrossStroke);
+  let strokeWidthPixels = widthMm * pixelsPerMmAcrossStroke;
   let radius = strokeWidthPixels * 0.5;
   let pixel = mix(start, end, corner.x) + (tangent * (2 * corner.x - 1) + normal * corner.y) * (radius + 1);
   let ndc = pixel / camera.viewport.xy * vec2f(2, -2) + vec2f(-1, 1);
-  let enabled = widths.z == 0 || strokeWidthPixels > baseWidthPixels;
-  return VertexOut(vec4f(ndc, 0, 1), pixel, vec4f(start, end), radius, select(vec4f(0), color, enabled));
+  // Antialiasing would otherwise give a zero-width stroke a 1 px line.
+  let isVisible = strokeWidthPixels > 0;
+  return VertexOut(vec4f(ndc, 0, 1), pixel, vec4f(start, end), radius, select(vec4f(0), color, isVisible));
 }
 @fragment fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
   let offset = in.pixel - in.endpoints.xy;
@@ -140,12 +138,12 @@ export class LayerStrokes {
       const strokeInstanceAttributes = new Float32Array(
         layerStrokes.length * FLOATS_PER_STROKE,
       )
-      layerStrokes.forEach((stroke, index) => {
+      for (const [index, stroke] of layerStrokes.entries()) {
         strokeInstanceAttributes.set(
           packStrokeInstanceAttributes(stroke),
           index * FLOATS_PER_STROKE,
         )
-      })
+      }
       const buffer = this.device.createBuffer({
         size: strokeInstanceAttributes.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -188,13 +186,13 @@ export class LayerStrokes {
                 },
                 {
                   shaderLocation: 1,
-                  offset: WIDTHS_OFFSET_FLOATS * BYTES_PER_FLOAT,
+                  offset: COLOR_OFFSET_FLOATS * BYTES_PER_FLOAT,
                   format: "float32x4",
                 },
                 {
                   shaderLocation: 2,
-                  offset: COLOR_OFFSET_FLOATS * BYTES_PER_FLOAT,
-                  format: "float32x4",
+                  offset: WIDTH_OFFSET_FLOATS * BYTES_PER_FLOAT,
+                  format: "float32",
                 },
               ],
             },
@@ -232,13 +230,9 @@ function packStrokeInstanceAttributes(stroke: LayerStroke): number[] {
   floats[ENDPOINTS_OFFSET_FLOATS + 1] = stroke.start.y
   floats[ENDPOINTS_OFFSET_FLOATS + 2] = stroke.end.x
   floats[ENDPOINTS_OFFSET_FLOATS + 3] = stroke.end.y
-  floats[WIDTHS_OFFSET_FLOATS] = stroke.widthMm
-  floats[WIDTHS_OFFSET_FLOATS + 1] = stroke.minWidthPixels ?? 0
-  floats[WIDTHS_OFFSET_FLOATS + 2] = stroke.extraWidthPixels ?? 0
-  floats[WIDTHS_OFFSET_FLOATS + 3] =
-    stroke.maxWidthMm ?? UNBOUNDED_WIDTH_SENTINEL_MM
   for (let channel = 0; channel < 4; channel++) {
     floats[COLOR_OFFSET_FLOATS + channel] = stroke.color[channel]
   }
+  floats[WIDTH_OFFSET_FLOATS] = stroke.widthMm
   return floats
 }
