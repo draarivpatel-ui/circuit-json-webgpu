@@ -1,6 +1,6 @@
 import type { Browser, Page } from "playwright"
 import { PNG } from "pngjs"
-import { createServer, type ViteDevServer } from "vite"
+import { type ViteDevServer, createServer } from "vite"
 import type { LayerStroke, Matrix } from "../../lib"
 import { launchWebGpuBrowser } from "../../scripts/lib/launch-webgpu-browser"
 
