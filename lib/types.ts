@@ -10,7 +10,7 @@ export type Matrix = {
   f: number
 }
 export type Color = readonly [number, number, number, number]
-/** A round stroke painted on top of the geometry for an existing layer. */
+/** A round stroke painted on top of the geometry for an existing layer. Like a 2D canvas, it paints nothing when its ends coincide. */
 export type LayerStroke = {
   layer: string
   start: Point

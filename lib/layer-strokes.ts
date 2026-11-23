@@ -144,6 +144,9 @@ export class LayerStrokes {
 
     const strokesByRenderLayer = new Map<RenderLayerName, LayerStroke[]>()
     for (const stroke of strokes) {
+      // A 2D canvas paints nothing for a line whose ends coincide.
+      if (stroke.start.x === stroke.end.x && stroke.start.y === stroke.end.y)
+        continue
       const name = normalizeLayer(stroke.layer)
       const layerStrokes = strokesByRenderLayer.get(name)
       if (layerStrokes) {
