@@ -13,7 +13,11 @@ import pixelmatch from "pixelmatch"
 import { featureSnapshot } from "./parity/snapshot"
 import { prepareComparison } from "./parity/prepare"
 import { compose, scale, translate } from "transformation-matrix"
-import type { CircuitJson } from "../lib"
+import type { CircuitJson, RenderOptions } from "../lib"
+import {
+  layerStrokes,
+  renderLayerStrokesBoard,
+} from "./fixtures/layer-strokes-board"
 import pcbBendFixture from "./fixtures/pcb-bend.circuit.json"
 
 const root = fileURLToPath(new URL("../", import.meta.url))
@@ -589,7 +593,8 @@ try {
   )
   const names = await page.evaluate(() => window.gpuTest.names)
   await mkdir(new URL("./actual/", import.meta.url), { recursive: true })
-  async function snapshot(name: string) {
+  let snapshotCount = 0
+  async function snapshot(name: string, maxChangedRatio = 0.002) {
     await page.evaluate(
       () =>
         new Promise((resolve) =>
@@ -618,7 +623,7 @@ try {
         actual.height,
         { threshold: 0.1 },
       )
-      if (changed > actual.width * actual.height * 0.002) {
+      if (changed > actual.width * actual.height * maxChangedRatio) {
         await writeFile(
           new URL(`./actual/${name}.png`, import.meta.url),
           buffer,
@@ -632,9 +637,121 @@ try {
         )
       }
     }
+    snapshotCount++
     console.log(`snapshot ${name}`)
     return PNG.sync.read(buffer)
   }
+  const layerStrokeBoard = await renderLayerStrokesBoard()
+  const strokeVia = layerStrokeBoard.find(
+    (element) => element.type === "pcb_via",
+  )
+  assert(strokeVia)
+  const strokeTransform = { a: 36, b: 0, c: 0, d: -36, e: 400, f: 300 }
+  const strokeOptions: RenderOptions = {
+    layerStrokes,
+    transform: strokeTransform,
+    selectedLayer: "top",
+    hiddenLayerOpacity: 0.55,
+    showBoardMaterial: true,
+    showSolderMask: false,
+    background: [0.05, 0.06, 0.08, 1],
+  }
+  const strokeDiagnostics = await page.evaluate(
+    async ({ elements, options }) => {
+      const { drawer } = window.gpuTest
+      drawer.drawElements(elements, options)
+      await drawer.flush()
+      return drawer.diagnostics
+    },
+    { elements: layerStrokeBoard, options: strokeOptions },
+  )
+  assert.deepEqual(strokeDiagnostics, [])
+  // A missing hairline or square caps would fit within the default tolerance.
+  const strokeMaxChangedRatio = 0.0002
+  await snapshot("layer-strokes", strokeMaxChangedRatio)
+  const strokeViews: Record<string, RenderOptions> = {
+    "layer-strokes-bottom-selected": { selectedLayer: "bottom" },
+    "layer-strokes-non-uniform-scale": {
+      selectedLayer: "top",
+      transform: { ...strokeTransform, a: 44, d: -22 },
+    },
+    "layer-strokes-x-ray": {
+      transform: strokeTransform,
+      xRayElementIds: [strokeVia.pcb_via_id],
+    },
+  }
+  for (const [name, options] of Object.entries(strokeViews)) {
+    await page.evaluate(async (options) => {
+      const { drawer } = window.gpuTest
+      drawer.render(options)
+      await drawer.flush()
+    }, options)
+    await snapshot(name, strokeMaxChangedRatio)
+  }
+  // Use a single layer and uniform scaling for the Canvas reference.
+  const strokePad = layerStrokeBoard.find(
+    (element) => element.type === "pcb_smtpad" && element.layer === "top",
+  )
+  assert(strokePad?.type === "pcb_smtpad" && strokePad.shape === "rect")
+  const strokeFrame = await page.evaluate(
+    async ({ elements, options }) => {
+      const { drawer } = window.gpuTest
+      drawer.drawElements(elements, {
+        ...options,
+        layers: ["top"],
+        background: [0, 0, 0, 1],
+      })
+      await drawer.flush()
+      return document.querySelector("canvas")!.toDataURL().split(",")[1]
+    },
+    {
+      elements: [strokePad],
+      options: {
+        ...strokeOptions,
+        layerStrokes: layerStrokes.map((stroke) => ({
+          ...stroke,
+          layer: "top",
+        })),
+      },
+    },
+  )
+  const strokeImage = PNG.sync.read(Buffer.from(strokeFrame, "base64"))
+  const strokeCanvas = createCanvas(strokeImage.width, strokeImage.height)
+  const strokeCtx = strokeCanvas.getContext("2d")
+  strokeCtx.fillStyle = "black"
+  strokeCtx.fillRect(0, 0, strokeImage.width, strokeImage.height)
+  const { a, b, c, d, e, f } = strokeTransform
+  strokeCtx.setTransform(a, b, c, d, e, f)
+  strokeCtx.fillStyle = `rgb(${layerColors.top.slice(0, 3).join(",")})`
+  strokeCtx.fillRect(
+    strokePad.x - strokePad.width / 2,
+    strokePad.y - strokePad.height / 2,
+    strokePad.width,
+    strokePad.height,
+  )
+  strokeCtx.lineCap = "round"
+  for (const stroke of layerStrokes) {
+    const [r, g, b, alpha] = stroke.color
+    strokeCtx.strokeStyle = `rgba(${r * 255},${g * 255},${b * 255},${alpha})`
+    strokeCtx.lineWidth = stroke.widthMm
+    strokeCtx.beginPath()
+    strokeCtx.moveTo(stroke.start.x, stroke.start.y)
+    strokeCtx.lineTo(stroke.end.x, stroke.end.y)
+    strokeCtx.stroke()
+  }
+  const referenceStrokes = PNG.sync.read(strokeCanvas.toBuffer("image/png"))
+  const strokeDiff = pixelmatch(
+    referenceStrokes.data,
+    strokeImage.data,
+    undefined,
+    strokeImage.width,
+    strokeImage.height,
+    { threshold: 0.1 },
+  )
+  assert(
+    strokeDiff <= 100,
+    `Layer strokes differ from Canvas at ${strokeDiff} pixels`,
+  )
   const soldermask = await page.evaluate(async () => {
     const drawer = window.gpuTest.drawer
     drawer.drawElements(
@@ -832,6 +949,7 @@ try {
     "PCB bend SVG/WebGPU comparison snapshot",
   )
   console.log("snapshot pcb-bend (circuit-to-svg / circuit-json-webgpu)")
+  snapshotCount++
   for (const name of names) {
     const stats = await page.evaluate(
       (name) => window.gpuTest.renderFixture(name),
@@ -1027,7 +1145,7 @@ try {
     errors.filter((e) => !e.includes("404")),
     [],
   )
-  const report = { snapshots: names.length + 4, adapter, large, navigation }
+  const report = { snapshots: snapshotCount, adapter, large, navigation }
   await writeFile(
     new URL("./actual/report.json", import.meta.url),
     JSON.stringify(report, null, 2),
