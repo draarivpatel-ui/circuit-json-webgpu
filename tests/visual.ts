@@ -594,7 +594,13 @@ try {
   const names = await page.evaluate(() => window.gpuTest.names)
   await mkdir(new URL("./actual/", import.meta.url), { recursive: true })
   let snapshotCount = 0
-  async function snapshot(name: string, maxChangedRatio = 0.002) {
+  async function snapshot(
+    name: string,
+    {
+      caption,
+      maxChangedRatio = 0.002,
+    }: { caption?: string; maxChangedRatio?: number } = {},
+  ) {
     await page.evaluate(
       () =>
         new Promise((resolve) =>
@@ -608,15 +614,41 @@ try {
         ? `${name}.swiftshader`
         : name
     const file = new URL(`./snapshots/${baseline}.png`, import.meta.url)
-    if (process.env.UPDATE_SNAPSHOTS) await writeFile(file, buffer)
-    else {
-      const expected = PNG.sync.read(await readFile(file)),
-        actual = PNG.sync.read(buffer)
+    const actual = PNG.sync.read(buffer)
+    const { width, height } = actual
+    const captionHeight = caption ? 60 : 0
+    const renderOffset = width * captionHeight * 4
+    if (process.env.UPDATE_SNAPSHOTS) {
+      if (caption) {
+        const context = createCanvas(width, captionHeight).getContext("2d")
+        context.fillStyle = "#1c2330"
+        context.fillRect(0, 0, width, captionHeight)
+        context.fillStyle = "#f3f5f8"
+        context.font = "16px sans-serif"
+        context.textAlign = "center"
+        context.textBaseline = "middle"
+        const lines = caption.split("\n")
+        for (const [index, line] of lines.entries()) {
+          const y = captionHeight / 2 + (index - (lines.length - 1) / 2) * 22
+          context.fillText(line, width / 2, y)
+        }
+        const captioned = new PNG({ width, height: captionHeight + height })
+        captioned.data.set(
+          context.getImageData(0, 0, width, captionHeight).data,
+        )
+        captioned.data.set(actual.data, renderOffset)
+        await writeFile(file, PNG.sync.write(captioned))
+      } else {
+        await writeFile(file, buffer)
+      }
+    } else {
+      const expected = PNG.sync.read(await readFile(file))
       assert.equal(actual.width, expected.width)
-      assert.equal(actual.height, expected.height)
+      assert.equal(actual.height + captionHeight, expected.height)
       const diff = new PNG({ width: actual.width, height: actual.height })
+      // Font rendering varies by platform, so compare only the board pixels.
       const changed = pixelmatch(
-        expected.data,
+        expected.data.subarray(renderOffset),
         actual.data,
         diff.data,
         actual.width,
@@ -639,7 +671,7 @@ try {
     }
     snapshotCount++
     console.log(`snapshot ${name}`)
-    return PNG.sync.read(buffer)
+    return actual
   }
   const layerStrokeBoard = await renderLayerStrokesBoard()
   const strokeVia = layerStrokeBoard.find(
@@ -668,25 +700,36 @@ try {
   assert.deepEqual(strokeDiagnostics, [])
   // A missing hairline or square caps would fit within the default tolerance.
   const strokeMaxChangedRatio = 0.0002
-  await snapshot("layer-strokes", strokeMaxChangedRatio)
-  const strokeViews: Record<string, RenderOptions> = {
-    "layer-strokes-bottom-selected": { selectedLayer: "bottom" },
+  await snapshot("layer-strokes", {
+    caption:
+      "Top, bottom, and inner layer strokes: round caps, round joins, and a subpixel hairline.\nTranslucent strokes draw over copper and under drill holes.",
+    maxChangedRatio: strokeMaxChangedRatio,
+  })
+  const strokeViews: Record<string, RenderOptions & { caption: string }> = {
+    "layer-strokes-bottom-selected": {
+      selectedLayer: "bottom",
+      caption:
+        "Bottom layer selected: its strokes draw in front, and other layers fade.",
+    },
     "layer-strokes-non-uniform-scale": {
       selectedLayer: "top",
       transform: { ...strokeTransform, a: 44, d: -22 },
+      caption:
+        "Non-uniform scale: stroke widths are measured in board mm, like the pads.",
     },
     "layer-strokes-x-ray": {
       transform: strokeTransform,
       xRayElementIds: [strokeVia.pcb_via_id],
+      caption: "X-Ray: layer strokes are hidden.",
     },
   }
-  for (const [name, options] of Object.entries(strokeViews)) {
+  for (const [name, { caption, ...options }] of Object.entries(strokeViews)) {
     await page.evaluate(async (options) => {
       const { drawer } = window.gpuTest
       drawer.render(options)
       await drawer.flush()
     }, options)
-    await snapshot(name, strokeMaxChangedRatio)
+    await snapshot(name, { caption, maxChangedRatio: strokeMaxChangedRatio })
   }
   // Use a single layer and uniform scaling for the Canvas reference.
   const strokePad = layerStrokeBoard.find(
