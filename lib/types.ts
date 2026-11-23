@@ -1,4 +1,5 @@
 import type { AnyCircuitElement } from "circuit-json"
+import type { PhaseSkewColors } from "circuit-json-to-differential-pair-phase-skew"
 export type CircuitJson = readonly AnyCircuitElement[]
 export type Point = { x: number; y: number }
 export type Matrix = {
@@ -11,6 +12,9 @@ export type Matrix = {
 }
 export type Color = readonly [number, number, number, number]
 export type RenderOptions = {
+  /** Color routed differential pairs by local phase skew. Defaults to false. */
+  showDifferentialPairPhaseSkew?: boolean
+  phaseSkewColors?: Partial<PhaseSkewColors>
   transform?: Matrix
   layers?: readonly string[]
   selectedLayer?: string

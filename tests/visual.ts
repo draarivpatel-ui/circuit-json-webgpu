@@ -833,6 +833,7 @@ try {
         canvas.height = height
         drawer.drawElements(elements as unknown as CircuitJson, {
           transform,
+          showDifferentialPairPhaseSkew: true,
           hiddenLayerOpacity: 1,
           background: [0, 0, 0, 1],
         })
