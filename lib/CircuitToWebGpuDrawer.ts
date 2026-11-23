@@ -1,7 +1,7 @@
 import { compileCircuitJsonWithCopperPourCache } from "./compile-circuit"
 import { CopperPourTriangulations } from "./copper-pour-triangulations"
-import { LayerStrokes } from "./layer-strokes"
 import { normalizeLayer } from "./colors"
+import { LayerStrokes } from "./layer-strokes"
 import { compositeShader, geometryShader } from "./shaders"
 import type {
   CircuitJson,
