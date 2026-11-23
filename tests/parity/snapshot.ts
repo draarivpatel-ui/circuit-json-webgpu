@@ -9,15 +9,19 @@ export async function featureSnapshot(
   svg: PNG,
   gpu: PNG,
   key: string,
+  caption?: string,
 ) {
-  const headerHeight = 32
+  const headerHeight = caption ? 54 : 32
+  const escapedCaption = caption
+    ?.replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
   const pair = new PNG({
     width: svg.width * 2,
     height: svg.height + headerHeight,
   })
   const header = PNG.sync.read(
     new Resvg(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${pair.width}" height="${headerHeight}"><rect width="100%" height="100%" fill="#222"/><g fill="white" font-family="sans-serif" font-size="14"><text x="8" y="22">circuit-to-svg</text><text x="${svg.width + 8}" y="22">circuit-json-webgpu</text></g></svg>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${pair.width}" height="${headerHeight}"><rect width="100%" height="100%" fill="#222"/><g fill="white" font-family="sans-serif" font-size="14"><text x="8" y="22">circuit-to-svg</text><text x="${svg.width + 8}" y="22">circuit-json-webgpu</text>${caption ? `<text x="8" y="43" fill="#ccc">${escapedCaption}</text>` : ""}</g></svg>`,
     )
       .render()
       .asPng(),
