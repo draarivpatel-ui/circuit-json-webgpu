@@ -8,15 +8,17 @@ const BYTES_PER_FLOAT = 4
 const ENDPOINTS_OFFSET_FLOATS = 0
 const COLOR_OFFSET_FLOATS = 4
 const WIDTH_OFFSET_FLOATS = 8
-/** Board segments shorter than this are dots, so they still get a direction. */
-const MIN_BOARD_DIRECTION_LENGTH_MM = 1e-6
-/** Canvas vectors shorter than this are treated as zero length. */
-const MIN_CANVAS_DIRECTION_LENGTH_PIXELS = 1e-6
-/** Points along the stroke at which a pixel's coverage is averaged. */
-const COVERAGE_SAMPLES_ALONG = 8
+/** Board segments at or below this length use the fallback direction. */
+const MIN_SEGMENT_LENGTH_MM = 1e-6
+/** Canvas segments at or below this length use the fallback direction. */
+const MIN_SEGMENT_LENGTH_PIXELS = 1e-6
+/** Lower bound for the transformed tangent length in pixels per mm. */
+const MIN_PIXELS_PER_MM = 1e-6
+/** Integration steps along the stroke used to estimate pixel coverage. */
+const COVERAGE_INTEGRATION_STEPS = 8
 
-/** A layer name after `normalizeLayer`, as the drawer names its layer passes. */
-type RenderLayerName = string
+/** A PCB layer name after `normalizeLayer`. */
+type NormalizedLayerName = string
 
 const strokeShader = /* wgsl */ `
 struct Camera { rowX: vec4f, rowY: vec4f, viewport: vec4f }
@@ -24,14 +26,15 @@ struct Camera { rowX: vec4f, rowY: vec4f, viewport: vec4f }
 struct VertexOut {
   @builtin(position) position: vec4f,
   @location(0) pixel: vec2f,
-  @location(1) @interpolate(flat) endpoints: vec4f,
-  @location(2) @interpolate(flat) radius: f32,
+  @location(1) @interpolate(flat) canvasEndpointsPixels: vec4f,
+  @location(2) @interpolate(flat) radiusPixels: f32,
   @location(3) @interpolate(flat) color: vec4f,
 }
-const MIN_BOARD_DIRECTION_LENGTH_MM = ${MIN_BOARD_DIRECTION_LENGTH_MM};
-const MIN_CANVAS_DIRECTION_LENGTH_PIXELS = ${MIN_CANVAS_DIRECTION_LENGTH_PIXELS};
-const COVERAGE_SAMPLES_ALONG = ${COVERAGE_SAMPLES_ALONG};
-fn project(p: vec2f) -> vec2f {
+const MIN_SEGMENT_LENGTH_MM = ${MIN_SEGMENT_LENGTH_MM};
+const MIN_SEGMENT_LENGTH_PIXELS = ${MIN_SEGMENT_LENGTH_PIXELS};
+const MIN_PIXELS_PER_MM = ${MIN_PIXELS_PER_MM};
+const COVERAGE_INTEGRATION_STEPS = ${COVERAGE_INTEGRATION_STEPS};
+fn boardToCanvas(p: vec2f) -> vec2f {
   return vec2f(dot(camera.rowX.xyz, vec3f(p, 1)), dot(camera.rowY.xyz, vec3f(p, 1)));
 }
 // The length of [center - 0.5, center + 0.5] inside [low, high]: how much of
@@ -40,55 +43,55 @@ fn boxOverlap(center: f32, low: f32, high: f32) -> f32 {
   return clamp(min(center + 0.5, high) - max(center - 0.5, low), 0, 1);
 }
 // Half the stroke's width at a distance along it from its start, in
-// canvas pixels: the radius along the segment, narrowing round each cap.
-fn capsuleHalfWidth(alongPixels: f32, lengthPixels: f32, radius: f32) -> f32 {
+// canvas pixels: the radius along the segment, narrowing around each cap.
+fn capsuleHalfWidth(alongPixels: f32, lengthPixels: f32, radiusPixels: f32) -> f32 {
   let beyondEnd = max(max(-alongPixels, alongPixels - lengthPixels), 0);
-  return sqrt(max(radius * radius - beyondEnd * beyondEnd, 0));
+  return sqrt(max(radiusPixels * radiusPixels - beyondEnd * beyondEnd, 0));
 }
 fn direction(delta: vec2f, minLength: f32) -> vec2f {
   return select(vec2f(1, 0), delta / max(length(delta), minLength), length(delta) > minLength);
 }
 @vertex fn vertexMain(
   @builtin(vertex_index) vertex: u32,
-  @location(0) endpoints: vec4f,
+  @location(0) boardEndpointsMm: vec4f,
   @location(1) color: vec4f,
   @location(2) widthMm: f32,
 ) -> VertexOut {
   let corners = array<vec2f, 6>(vec2f(0,-1), vec2f(1,-1), vec2f(0,1),
                                vec2f(0,1), vec2f(1,-1), vec2f(1,1));
   let corner = corners[vertex];
-  let start = project(endpoints.xy);
-  let end = project(endpoints.zw);
-  let tangent = direction(end - start, MIN_CANVAS_DIRECTION_LENGTH_PIXELS);
+  let start = boardToCanvas(boardEndpointsMm.xy);
+  let end = boardToCanvas(boardEndpointsMm.zw);
+  let tangent = direction(end - start, MIN_SEGMENT_LENGTH_PIXELS);
   let normal = vec2f(-tangent.y, tangent.x);
   // Canvas pixels per mm across the stroke: |det A| / |A t| for the board
   // direction t, so a non-uniform transform keeps the board width.
   let linear = mat2x2f(camera.rowX.x, camera.rowY.x, camera.rowX.y, camera.rowY.y);
-  let boardTangent = direction(endpoints.zw - endpoints.xy, MIN_BOARD_DIRECTION_LENGTH_MM);
-  let pixelsPerMmAcrossStroke = abs(determinant(linear)) / max(length(linear * boardTangent), MIN_CANVAS_DIRECTION_LENGTH_PIXELS);
+  let boardTangent = direction(boardEndpointsMm.zw - boardEndpointsMm.xy, MIN_SEGMENT_LENGTH_MM);
+  let pixelsPerMmAcrossStroke = abs(determinant(linear)) / max(length(linear * boardTangent), MIN_PIXELS_PER_MM);
   let strokeWidthPixels = widthMm * pixelsPerMmAcrossStroke;
-  let radius = strokeWidthPixels * 0.5;
-  let pixel = mix(start, end, corner.x) + (tangent * (2 * corner.x - 1) + normal * corner.y) * (radius + 1);
+  let radiusPixels = strokeWidthPixels * 0.5;
+  let pixel = mix(start, end, corner.x) + (tangent * (2 * corner.x - 1) + normal * corner.y) * (radiusPixels + 1);
   let ndc = pixel / camera.viewport.xy * vec2f(2, -2) + vec2f(-1, 1);
-  return VertexOut(vec4f(ndc, 0, 1), pixel, vec4f(start, end), radius, color);
+  return VertexOut(vec4f(ndc, 0, 1), pixel, vec4f(start, end), radiusPixels, color);
 }
 @fragment fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
-  let offset = in.pixel - in.endpoints.xy;
-  let delta = in.endpoints.zw - in.endpoints.xy;
-  // The share of a 1 px box around the pixel, in the stroke's own frame,
+  let offset = in.pixel - in.canvasEndpointsPixels.xy;
+  let delta = in.canvasEndpointsPixels.zw - in.canvasEndpointsPixels.xy;
+  // The fraction of a 1 px box around the pixel, in the stroke's own frame,
   // that lies within the stroke: the overlap across the stroke, averaged at
   // points along it, so round caps and short pieces get only their area.
   let segmentLengthPixels = length(delta);
-  let tangent = direction(delta, MIN_CANVAS_DIRECTION_LENGTH_PIXELS);
+  let tangent = direction(delta, MIN_SEGMENT_LENGTH_PIXELS);
   let alongPixels = dot(offset, tangent);
   let acrossPixels = dot(offset, vec2f(-tangent.y, tangent.x));
   var coverage = 0.0;
-  for (var sample = 0; sample < COVERAGE_SAMPLES_ALONG; sample++) {
-    let sampleAlongPixels = alongPixels - 0.5 + (f32(sample) + 0.5) / f32(COVERAGE_SAMPLES_ALONG);
-    let halfWidth = capsuleHalfWidth(sampleAlongPixels, segmentLengthPixels, in.radius);
-    coverage += boxOverlap(acrossPixels, -halfWidth, halfWidth);
+  for (var step = 0; step < COVERAGE_INTEGRATION_STEPS; step++) {
+    let sampleAlongPixels = alongPixels - 0.5 + (f32(step) + 0.5) / f32(COVERAGE_INTEGRATION_STEPS);
+    let halfWidthPixels = capsuleHalfWidth(sampleAlongPixels, segmentLengthPixels, in.radiusPixels);
+    coverage += boxOverlap(acrossPixels, -halfWidthPixels, halfWidthPixels);
   }
-  coverage /= f32(COVERAGE_SAMPLES_ALONG);
+  coverage /= f32(COVERAGE_INTEGRATION_STEPS);
   let alpha = in.color.a * coverage;
   return vec4f(in.color.rgb * alpha, alpha);
 }
@@ -98,41 +101,41 @@ fn direction(delta: vec2f, minLength: f32) -> vec2f {
 export type StrokeStats = { strokeUploads: number }
 
 /**
- * Per-layer stroke buffers, drawn inside each layer's paint pass. Buffers
- * are rebuilt only when a different stroke array is set. Widths are kept
- * across the stroke under any affine transform; round caps are circles on
- * the canvas.
+ * Draws strokes after layer geometry and before erasures in the same render
+ * pass. Buffers are rebuilt only when a different stroke array is set. Widths
+ * are measured across the stroke under the affine transform. Round caps are
+ * circles on the canvas.
  */
-export class LayerStrokes {
+export class LayerStrokeRenderer {
   private device: GPUDevice
-  private uniform: GPUBuffer
+  private cameraUniformBuffer: GPUBuffer
   private sampleCount: number
   private blend: GPUBlendState
   private stats: StrokeStats
   private pipeline?: GPURenderPipeline
-  private camera?: GPUBindGroup
+  private cameraBindGroup?: GPUBindGroup
   private strokes?: readonly LayerStroke[]
-  private buffers = new Map<
-    RenderLayerName,
+  private instanceBuffers = new Map<
+    NormalizedLayerName,
     { buffer: GPUBuffer; strokeInstanceCount: number }
   >()
 
   constructor({
     device,
-    uniform,
+    cameraUniformBuffer,
     sampleCount,
     blend,
     stats,
   }: {
     device: GPUDevice
-    /** The drawer's camera uniform. */
-    uniform: GPUBuffer
+    /** The drawer's camera uniform buffer. */
+    cameraUniformBuffer: GPUBuffer
     sampleCount: number
     blend: GPUBlendState
     stats: StrokeStats
   }) {
     this.device = device
-    this.uniform = uniform
+    this.cameraUniformBuffer = cameraUniformBuffer
     this.sampleCount = sampleCount
     this.blend = blend
     this.stats = stats
@@ -145,20 +148,20 @@ export class LayerStrokes {
     this.strokes = strokes
     if (!strokes?.length) return
 
-    const strokesByRenderLayer = new Map<RenderLayerName, LayerStroke[]>()
+    const strokesByLayer = new Map<NormalizedLayerName, LayerStroke[]>()
     for (const stroke of strokes) {
       // A 2D canvas paints nothing for a line whose ends coincide.
       if (stroke.start.x === stroke.end.x && stroke.start.y === stroke.end.y)
         continue
       const name = normalizeLayer(stroke.layer)
-      const layerStrokes = strokesByRenderLayer.get(name)
+      const layerStrokes = strokesByLayer.get(name)
       if (layerStrokes) {
         layerStrokes.push(stroke)
         continue
       }
-      strokesByRenderLayer.set(name, [stroke])
+      strokesByLayer.set(name, [stroke])
     }
-    for (const [layer, layerStrokes] of strokesByRenderLayer) {
+    for (const [layer, layerStrokes] of strokesByLayer) {
       const strokeInstanceAttributes = new Float32Array(
         layerStrokes.length * FLOATS_PER_STROKE,
       )
@@ -173,7 +176,7 @@ export class LayerStrokes {
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       })
       this.device.queue.writeBuffer(buffer, 0, strokeInstanceAttributes)
-      this.buffers.set(layer, {
+      this.instanceBuffers.set(layer, {
         buffer,
         strokeInstanceCount: layerStrokes.length,
       })
@@ -187,10 +190,10 @@ export class LayerStrokes {
     layer,
   }: {
     pass: GPURenderPassEncoder
-    layer: RenderLayerName
+    layer: NormalizedLayerName
   }) {
-    const strokes = this.buffers.get(layer)
-    if (!strokes) return
+    const instanceBuffer = this.instanceBuffers.get(layer)
+    if (!instanceBuffer) return
     if (!this.pipeline) {
       const module = this.device.createShaderModule({ code: strokeShader })
       this.pipeline = this.device.createRenderPipeline({
@@ -229,21 +232,23 @@ export class LayerStrokes {
         },
         multisample: { count: this.sampleCount },
       })
-      this.camera = this.device.createBindGroup({
+      this.cameraBindGroup = this.device.createBindGroup({
         layout: this.pipeline.getBindGroupLayout(0),
-        entries: [{ binding: 0, resource: { buffer: this.uniform } }],
+        entries: [
+          { binding: 0, resource: { buffer: this.cameraUniformBuffer } },
+        ],
       })
     }
     pass.setPipeline(this.pipeline)
-    pass.setBindGroup(0, this.camera!)
-    pass.setVertexBuffer(0, strokes.buffer)
-    pass.draw(6, strokes.strokeInstanceCount)
+    pass.setBindGroup(0, this.cameraBindGroup!)
+    pass.setVertexBuffer(0, instanceBuffer.buffer)
+    pass.draw(6, instanceBuffer.strokeInstanceCount)
   }
 
   /** Destroys the uploaded buffers. */
   dispose() {
-    for (const { buffer } of this.buffers.values()) buffer.destroy()
-    this.buffers.clear()
+    for (const { buffer } of this.instanceBuffers.values()) buffer.destroy()
+    this.instanceBuffers.clear()
   }
 }
 

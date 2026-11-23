@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test"
 import { renderCrossedPadsBoard } from "../fixtures/crossed-pads-board"
 import {
-  BOTTOM_LINE,
+  BOTTOM_PAD_STROKE,
   FIT_TRANSFORM,
   openStrokePage,
 } from "../fixtures/stroke-page"
 
 test("stroke buffers upload once per array, not per camera change, and clear without an upload", async () => {
-  const elements = await renderCrossedPadsBoard({ layers: 2 })
+  const elements = await renderCrossedPadsBoard()
   const { page, close } = await openStrokePage()
   try {
     const uploads = await page.evaluate(
@@ -26,7 +26,7 @@ test("stroke buffers upload once per array, not per camera change, and clear wit
         counts.push(drawer.stats.strokeUploads - before)
         return counts
       },
-      { elements, line: BOTTOM_LINE, transform: FIT_TRANSFORM },
+      { elements, line: BOTTOM_PAD_STROKE, transform: FIT_TRANSFORM },
     )
     expect(uploads).toEqual([1, 1, 2, 2])
   } finally {

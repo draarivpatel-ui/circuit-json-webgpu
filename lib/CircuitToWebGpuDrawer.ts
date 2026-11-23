@@ -1,7 +1,7 @@
 import { compileCircuitJsonWithCopperPourCache } from "./compile-circuit"
 import { CopperPourTriangulations } from "./copper-pour-triangulations"
 import { normalizeLayer } from "./colors"
-import { LayerStrokes } from "./layer-strokes"
+import { LayerStrokeRenderer } from "./layer-stroke-renderer"
 import { compositeShader, geometryShader } from "./shaders"
 import type {
   CircuitJson,
@@ -66,7 +66,7 @@ export class CircuitToWebGpuDrawer {
   private paintPipeline: GPURenderPipeline
   private erasePipeline: GPURenderPipeline
   private compositePipeline: GPURenderPipeline
-  private layerStrokes?: LayerStrokes
+  private layerStrokeRenderer?: LayerStrokeRenderer
   private sampler: GPUSampler
   private options: RenderOptions = {}
 
@@ -422,15 +422,15 @@ export class CircuitToWebGpuDrawer {
       ...selectedLayers.map((layer) => ({ layer, xRay: true })),
     ]
     if (o.layerStrokes?.length) {
-      this.layerStrokes ??= new LayerStrokes({
+      this.layerStrokeRenderer ??= new LayerStrokeRenderer({
         device: this.device,
-        uniform: this.uniform,
+        cameraUniformBuffer: this.uniform,
         sampleCount: this.config.sampleCount ?? 4,
         blend: over,
         stats: this.stats,
       })
     }
-    this.layerStrokes?.set(o.layerStrokes)
+    this.layerStrokeRenderer?.set(o.layerStrokes)
     const encoder = this.device.createCommandEncoder()
     const drillText = visible.filter((layer) =>
       layer.name.endsWith("_silkscreen_text"),
@@ -455,7 +455,7 @@ export class CircuitToWebGpuDrawer {
         [layer.erase, this.erasePipeline],
       ] as const) {
         if (pipeline === this.erasePipeline && !xRayActive)
-          this.layerStrokes?.draw({ pass, layer: layer.name })
+          this.layerStrokeRenderer?.draw({ pass, layer: layer.name })
         if (!mesh.count) continue
         // Erase geometry (drills/cutouts) must retain its physical meaning in both passes.
         pass.setBindGroup(
@@ -648,7 +648,7 @@ export class CircuitToWebGpuDrawer {
     if (this.disposed) return
     this.disposed = true
     this.releaseLayers()
-    this.layerStrokes?.dispose()
+    this.layerStrokeRenderer?.dispose()
     this.sample?.destroy()
     this.uniform.destroy()
     this.xRayUniform.destroy()

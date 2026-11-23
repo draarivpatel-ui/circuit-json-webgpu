@@ -18,7 +18,7 @@ export const FIT_TRANSFORM: Matrix = {
 }
 
 /** A 0.5 mm horizontal stroke along the bottom pad, from x = -3 to 3 mm. */
-export const BOTTOM_LINE: Omit<LayerStroke, "color"> = {
+export const BOTTOM_PAD_STROKE: Omit<LayerStroke, "color"> = {
   layer: "bottom",
   start: { x: -3, y: 0 },
   end: { x: 3, y: 0 },
@@ -70,7 +70,7 @@ async function closeStrokePage({
 }
 
 /** The RGB of one pixel in a base64 PNG of the canvas. */
-export function pixelAt({
+export function rgbAt({
   png,
   x,
   y,

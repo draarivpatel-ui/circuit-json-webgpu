@@ -10,18 +10,18 @@ const PIXELS_PER_MM = 20
 const SAMPLED_PIXEL = { x: 130, y: 100 }
 
 /** Stroke widths below a pixel, in canvas pixels. */
-const SUBPIXEL_WIDTHS = [0.1, 0.4, 0.8]
+const SUBPIXEL_WIDTHS_PIXELS = [0.1, 0.4, 0.8]
 
-/** Largest channel difference allowed where both renderers draw the stroke's body. */
-const MAX_INTERIOR_DIFFERENCE = 4
+/** Maximum difference in RGB channel levels (0–255) along the stroke body. */
+const MAX_INTERIOR_CHANNEL_DIFFERENCE = 4
 
 /**
- * Largest channel difference allowed from the stroke's exact area in the
- * pixel at a cap or short piece. The 2D canvas misses that area by up to
- * 30 there, so it is no reference; across a diagonal the pixel's box is
- * measured in the stroke's own frame.
+ * Maximum difference from the coverage reference in RGB channel levels
+ * (0–255) at caps and short segments. The 2D canvas can differ by up to
+ * 30 levels there. The shader measures diagonal coverage in the stroke's
+ * coordinate frame.
  */
-const MAX_AREA_DIFFERENCE = 12
+const MAX_COVERAGE_CHANNEL_DIFFERENCE = 12
 
 /** Samples per axis when measuring a stroke's exact area in the pixel. */
 const AREA_SAMPLES_PER_AXIS = 100
@@ -75,8 +75,8 @@ const SUBPIXEL_CASES: SubpixelCase[] = [
 ]
 
 test("strokes narrower than a pixel paint their area at caps and short pieces, match the 2D canvas along their body, and paint nothing when their ends coincide", async () => {
-  const elements = await renderCrossedPadsBoard({ layers: 2 })
-  const strokes = SUBPIXEL_WIDTHS.flatMap((widthPixels) => [
+  const elements = await renderCrossedPadsBoard()
+  const strokes = SUBPIXEL_WIDTHS_PIXELS.flatMap((widthPixels) => [
     ...SUBPIXEL_CASES.map((subpixelCase) => ({ ...subpixelCase, widthPixels })),
     {
       name: "coincident ends",
@@ -88,7 +88,7 @@ test("strokes narrower than a pixel paint their area at caps and short pieces, m
   ])
   const { page, close } = await openStrokePage()
   try {
-    const samples = await page.evaluate(
+    const renderedPixels = await page.evaluate(
       ({ elements, transform, strokes, pixel, pixelsPerMm }) => {
         const { drawer } = window.gpuTest
         const gpuCanvas = document.querySelector("canvas")!
@@ -142,7 +142,7 @@ test("strokes narrower than a pixel paint their area at caps and short pieces, m
       },
     )
     const results = strokes.map((stroke, index) => {
-      const { baselinePixel, webGpuPixel, canvasPixel } = samples[index]
+      const { baselinePixel, webGpuPixel, canvasPixel } = renderedPixels[index]
       const name = `${stroke.widthPixels} px ${stroke.name}`
       if (stroke.name === "coincident ends") {
         return { name, webGpuPixel, canvasPixel, expected: baselinePixel }
@@ -150,11 +150,11 @@ test("strokes narrower than a pixel paint their area at caps and short pieces, m
       if (stroke.reference === "canvas") {
         return { name, webGpuPixel, expected: canvasPixel }
       }
-      const share = getStrokeShareOfPixel(stroke)
-      const areaPixel = baselinePixel.map((channel, channelIndex) =>
-        Math.round(channel + ([0, 255, 0][channelIndex] - channel) * share),
+      const coverage = getPixelCoverage(stroke)
+      const expectedCoverageRgb = baselinePixel.map((channel, channelIndex) =>
+        Math.round(channel + ([0, 255, 0][channelIndex] - channel) * coverage),
       )
-      return { name, webGpuPixel, expected: areaPixel }
+      return { name, webGpuPixel, expected: expectedCoverageRgb }
     })
     for (const result of results) {
       const message = JSON.stringify(result)
@@ -164,8 +164,8 @@ test("strokes narrower than a pixel paint their area at caps and short pieces, m
         continue
       }
       const tolerance = result.name.endsWith("interior")
-        ? MAX_INTERIOR_DIFFERENCE
-        : MAX_AREA_DIFFERENCE
+        ? MAX_INTERIOR_CHANNEL_DIFFERENCE
+        : MAX_COVERAGE_CHANNEL_DIFFERENCE
       expect(
         largestChannelDifference(result.webGpuPixel, result.expected),
         message,
@@ -176,8 +176,8 @@ test("strokes narrower than a pixel paint their area at caps and short pieces, m
   }
 }, 30_000)
 
-/** The share of the sampled pixel inside a round-capped stroke, by sampling it on a grid. */
-function getStrokeShareOfPixel({
+/** Estimates how much of the pixel a round-capped stroke covers by sampling a grid. */
+function getPixelCoverage({
   start,
   end,
   widthPixels,

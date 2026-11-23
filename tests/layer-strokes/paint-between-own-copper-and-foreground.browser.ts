@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test"
 import { renderCrossedPadsBoard } from "../fixtures/crossed-pads-board"
 import {
-  BOTTOM_LINE,
+  BOTTOM_PAD_STROKE,
   FIT_TRANSFORM,
   openStrokePage,
-  pixelAt,
+  rgbAt,
 } from "../fixtures/stroke-page"
 
 test("a stroke paints over its own layer's copper and under the foreground layer", async () => {
-  const elements = await renderCrossedPadsBoard({ layers: 2 })
+  const elements = await renderCrossedPadsBoard()
   const { page, close } = await openStrokePage()
   try {
     const png = await page.evaluate(
@@ -21,11 +21,11 @@ test("a stroke paints over its own layer's copper and under the foreground layer
         })
         return document.querySelector("canvas")!.toDataURL().split(",")[1]
       },
-      { elements, line: BOTTOM_LINE, transform: FIT_TRANSFORM },
+      { elements, line: BOTTOM_PAD_STROKE, transform: FIT_TRANSFORM },
     )
     // The top pad covers the stroke at the origin.
-    expect(pixelAt({ png, x: 100, y: 100 })).toEqual([200, 52, 52])
-    expect(pixelAt({ png, x: 130, y: 100 })).toEqual([0, 255, 0])
+    expect(rgbAt({ png, x: 100, y: 100 })).toEqual([200, 52, 52])
+    expect(rgbAt({ png, x: 130, y: 100 })).toEqual([0, 255, 0])
   } finally {
     await close()
   }

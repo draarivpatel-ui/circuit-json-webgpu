@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test"
 import { renderCrossedPadsBoard } from "../fixtures/crossed-pads-board"
 import {
-  BOTTOM_LINE,
+  BOTTOM_PAD_STROKE,
   FIT_TRANSFORM,
   openStrokePage,
-  pixelAt,
+  rgbAt,
 } from "../fixtures/stroke-page"
 
-test("strokes are not drawn while X-ray inspects a net", async () => {
-  const elements = await renderCrossedPadsBoard({ layers: 2 })
+test("strokes are not drawn while X-Ray inspects a net", async () => {
+  const elements = await renderCrossedPadsBoard()
   const bottomPad = elements.find(
     (element) => element.type === "pcb_smtpad" && element.layer === "bottom",
   )
@@ -28,12 +28,12 @@ test("strokes are not drawn while X-ray inspects a net", async () => {
       },
       {
         elements,
-        line: BOTTOM_LINE,
+        line: BOTTOM_PAD_STROKE,
         transform: FIT_TRANSFORM,
         xRayElementIds: [bottomPad.pcb_smtpad_id],
       },
     )
-    expect(pixelAt({ png, x: 130, y: 100 })).not.toEqual([0, 255, 0])
+    expect(rgbAt({ png, x: 130, y: 100 })).not.toEqual([0, 255, 0])
   } finally {
     await close()
   }
