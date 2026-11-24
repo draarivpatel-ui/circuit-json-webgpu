@@ -75,9 +75,12 @@ try {
   browser = await launchWebGpuBrowser()
   const page = await browser.newPage()
   const errors: string[] = []
-  page.on("pageerror", (error) => errors.push(error.message))
+  page.on("pageerror", (error) => {
+    errors.push(error.message)
+    console.error(error.message)
+  })
   await page.goto(server.resolvedUrls!.local[0])
-  await page.waitForFunction(() => window.gpuTest)
+  await page.waitForFunction(() => window.gpuTest, null, { timeout: 30_000 })
 
   for (const fixture of phaseSkewCases) {
     const elements = fixture.render()
@@ -99,7 +102,7 @@ try {
       contextTransform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
       options: {},
     })
-    assert(scene, reason)
+    assert(scene, reason ?? "Could not prepare the phase skew comparison")
     const gpu = await page.evaluate(
       ({ elements, width, height, transform }) => {
         const { drawer, captureFrame } = window.gpuTest
