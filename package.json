@@ -59,12 +59,11 @@
     "vite": "^6.3.5",
     "@napi-rs/canvas": "^0.1.84",
     "@resvg/resvg-js": "^2.6.2",
-    "@tscircuit/circuit-json-util": "^0.0.128",
+    "@tscircuit/circuit-json-util": "^0.0.134",
     "@tscircuit/math-utils": "^0.0.36",
     "bun-match-svg": "^0.0.14",
     "circuit-json-to-connectivity-map": "^0.0.23",
-    "circuit-to-svg": "0.0.451",
-    "circuit-to-svg-phase-skew": "github:tscircuit/circuit-to-svg#ddc1f129ca28e7d3403a5eeec3aedc94818ba08d",
+    "circuit-to-svg": "0.0.464",
     "format-si-unit": "^0.0.12",
     "looks-same": "^10.0.1",
     "schematic-symbols": "^0.0.202",
@@ -78,7 +77,6 @@
     "tscircuit-phase-skew-fixtures": "npm:tscircuit@0.0.3285",
     "@tscircuit/circuit-json-util-reference": "npm:@tscircuit/circuit-json-util@0.0.99"
   },
-  "trustedDependencies": ["circuit-to-svg-phase-skew"],
   "overrides": {
     "sharp": "^0.34.3"
   },

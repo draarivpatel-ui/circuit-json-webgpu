@@ -7,7 +7,6 @@ import { PNG } from "pngjs"
 import { Resvg } from "@resvg/resvg-js"
 import { createCanvas } from "@napi-rs/canvas"
 import { convertCircuitJsonToPcbSvg } from "circuit-to-svg"
-import { convertCircuitJsonToPcbSvg as convertPhaseSkewSvg } from "circuit-to-svg-phase-skew"
 import { drawPcbCopperPour } from "circuit-to-canvas/lib/drawer/elements/pcb-copper-pour"
 import { DEFAULT_PCB_COLOR_MAP } from "circuit-to-canvas/lib/drawer/types"
 import pixelmatch from "pixelmatch"
@@ -844,8 +843,8 @@ try {
       },
       scene,
     )
-    const svg = convertPhaseSkewSvg(
-      scene.elements as Parameters<typeof convertPhaseSkewSvg>[0],
+    const svg = convertCircuitJsonToPcbSvg(
+      scene.elements as Parameters<typeof convertCircuitJsonToPcbSvg>[0],
       {
         width: scene.width,
         height: scene.height,
