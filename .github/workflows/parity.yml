@@ -23,9 +23,13 @@ jobs:
         working-directory: .parity-base
         run: |
           bun install
-          svg_reference_version=$(bun -p 'require("../node_modules/circuit-to-svg/package.json").version')
-          svg_schema_version=$(bun -p 'require("../node_modules/circuit-json/package.json").version')
-          bun add --dev --no-save "circuit-to-svg@$svg_reference_version" "circuit-json@$svg_schema_version"
+          bun -e '
+            import { $ } from "bun"
+            const readPackage = (name) => require(`../node_modules/${name}/package.json`)
+            const peers = Object.keys(readPackage("circuit-to-svg").peerDependencies)
+            const pins = ["circuit-to-svg", ...peers].map((name) => `${name}@${readPackage(name).version}`)
+            await $`bun add --dev --no-save ${pins}`
+          '
       - run: bunx playwright install --with-deps chromium
       # Normalize only the SVG reference rasterization; the base renderer stays unchanged.
       - name: Use the same SVG font fallback in both audits
