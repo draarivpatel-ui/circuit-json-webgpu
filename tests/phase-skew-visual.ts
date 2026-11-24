@@ -17,43 +17,35 @@ import {
 } from "./fixtures/phase-skew/forum-example-board.fixture"
 import { prepareComparison } from "./parity/prepare"
 import { renderSvg } from "./parity/render-svg"
-import { compareFeatureSnapshot } from "./parity/snapshot"
+import { featureSnapshot } from "./parity/snapshot"
 
 const phaseSkewCases = [
   {
     name: "matched-pair",
-    caption: "Matched pair. Both traces stay white when they are in step.",
     render: () => renderBoard(MatchedPairBoard()),
     width: 28,
     height: 8,
   },
   {
     name: "load-end-meander",
-    caption: "Load-end meander. Red and blue fade back to white near the load.",
     render: () => renderBoard(LoadEndMeanderBoard()),
     width: 28,
     height: 9,
   },
   {
     name: "local-compensation",
-    caption:
-      "Local compensation. The upper pair returns to white while the lower pair holds its skew.",
     render: () => renderBoard(LocalCompensationBoard()),
     width: 28,
     height: 11,
   },
   {
     name: "layer-change",
-    caption:
-      "Layer change. Skew carries through the vias and the drills stay visible.",
     render: () => renderBoard(LayerChangeBoard()),
     width: 28,
     height: 9,
   },
   {
     name: "kicad-forum",
-    caption:
-      "KiCad forum board. The upper pair changes polarity and realigns at the load.",
     render: renderForumExampleBoard,
     width: FORUM_BOARD_WIDTH_MM,
     height: FORUM_BOARD_HEIGHT_MM,
@@ -136,13 +128,12 @@ try {
       fixture.name,
     )
     const key = `phase-skew-${fixture.name}`
-    const snapshot = await compareFeatureSnapshot({
-      id: key,
-      svg: PNG.sync.read(await renderSvg(svg)),
-      gpu: PNG.sync.read(Buffer.from(gpu, "base64")),
+    const snapshot = await featureSnapshot(
       key,
-      caption: fixture.caption,
-    })
+      PNG.sync.read(await renderSvg(svg)),
+      PNG.sync.read(Buffer.from(gpu, "base64")),
+      key,
+    )
     assert(
       snapshot.pass,
       `${key}: ${snapshot.error ?? `${snapshot.changedPixels} changed pixels`}`,
