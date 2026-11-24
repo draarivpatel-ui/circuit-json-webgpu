@@ -43,7 +43,7 @@
     "polygon-clipping": "^0.15.7"
   },
   "peerDependencies": {
-    "circuit-json": ">=0.0.561"
+    "circuit-json": ">=0.0.518"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
