@@ -651,7 +651,7 @@ export class CircuitToWebGpuDrawer {
   dispose() {
     if (this.disposed) return
     this.disposed = true
-    this.phaseSkewRenderer.dispose()
+    this.phaseSkewRenderer?.dispose()
     this.releaseLayers()
     this.sample?.destroy()
     this.uniform.destroy()
