@@ -1,7 +1,7 @@
 import type { PcbPath } from "@tscircuit/props"
 import type { CircuitJson } from "circuit-json"
 import { Fragment, type ReactElement } from "react"
-import { Circuit } from "tscircuit-phase-skew-fixtures"
+import { Circuit } from "tscircuit"
 
 function Pair({
   name,
