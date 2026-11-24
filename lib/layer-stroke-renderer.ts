@@ -1,5 +1,9 @@
-import type { PhaseSkewStroke } from "circuit-json-to-differential-pair-phase-skew"
+import {
+  getDifferentialPairPhaseSkewStrokes,
+  type PhaseSkewStroke,
+} from "circuit-json-to-differential-pair-phase-skew"
 import { normalizeLayer, parseColor } from "./colors"
+import type { CircuitJson, RenderOptions } from "./types"
 
 type LayerName = ReturnType<typeof normalizeLayer>
 
@@ -103,6 +107,7 @@ export class LayerStrokeRenderer {
   private blend: GPUBlendState
   private pipeline?: GPURenderPipeline
   private cameraBindGroup?: GPUBindGroup
+  private phaseSkewColorKey?: string
   private instanceBuffers = new Map<
     LayerName,
     { buffer: GPUBuffer; strokeInstanceCount: number }
@@ -126,8 +131,32 @@ export class LayerStrokeRenderer {
     this.blend = blend
   }
 
+  updatePhaseSkewStrokes({
+    circuitJson,
+    phaseSkewColors,
+    stats,
+  }: {
+    circuitJson?: CircuitJson
+    phaseSkewColors?: RenderOptions["phaseSkewColors"]
+    stats: { phaseSkewUploads: number }
+  }) {
+    if (!circuitJson) return
+    const phaseSkewColorKey = JSON.stringify([
+      phaseSkewColors?.positive,
+      phaseSkewColors?.negative,
+      phaseSkewColors?.zero,
+      phaseSkewColors?.unknown,
+    ])
+    if (phaseSkewColorKey === this.phaseSkewColorKey) return
+    const strokes = getDifferentialPairPhaseSkewStrokes([...circuitJson], {
+      colors: phaseSkewColors,
+    })
+    if (this.setStrokes({ strokes })) stats.phaseSkewUploads++
+    this.phaseSkewColorKey = phaseSkewColorKey
+  }
+
   /** Replaces the buffer for each layer. Returns whether any strokes uploaded. */
-  setStrokes({ strokes }: { strokes: readonly PhaseSkewStroke[] }) {
+  private setStrokes({ strokes }: { strokes: readonly PhaseSkewStroke[] }) {
     this.dispose()
     const strokesByLayer = new Map<LayerName, PhaseSkewStroke[]>()
     for (const stroke of strokes) {
@@ -228,8 +257,9 @@ export class LayerStrokeRenderer {
     pass.draw(6, instanceBuffer.strokeInstanceCount)
   }
 
-  /** Destroys the uploaded buffers. */
+  /** Clears the color cache and destroys the uploaded buffers. */
   dispose() {
+    this.phaseSkewColorKey = undefined
     for (const { buffer } of this.instanceBuffers.values()) buffer.destroy()
     this.instanceBuffers.clear()
   }
