@@ -492,10 +492,7 @@ try {
         `Default pour color must match Canvas on ${background}: ${actual} vs ${expected}`,
       )
     }
-    const svgElements = [...pours.elements] as Parameters<
-      typeof convertCircuitJsonToPcbSvg
-    >[0]
-    const svg = convertCircuitJsonToPcbSvg(svgElements, {
+    const svg = convertCircuitJsonToPcbSvg([...pours.elements], {
       width: 200,
       height: 200,
       viewport: { minX: -10, minY: -10, maxX: 10, maxY: 10 },
