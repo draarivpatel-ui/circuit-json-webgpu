@@ -12,59 +12,9 @@ import { DEFAULT_PCB_COLOR_MAP } from "circuit-to-canvas/lib/drawer/types"
 import pixelmatch from "pixelmatch"
 import { featureSnapshot } from "./parity/snapshot"
 import { prepareComparison } from "./parity/prepare"
-import { renderSvg } from "./parity/render-svg"
 import { compose, scale, translate } from "transformation-matrix"
 import type { CircuitJson } from "../lib"
 import pcbBendFixture from "./fixtures/pcb-bend.circuit.json"
-import {
-  LayerChangeBoard,
-  LoadEndMeanderBoard,
-  LocalCompensationBoard,
-  MatchedPairBoard,
-  renderBoard,
-} from "./fixtures/phase-skew/example-boards.fixture"
-import { renderForumExampleBoard } from "./fixtures/phase-skew/forum-example-board.fixture"
-
-const phaseSkewCases = [
-  {
-    name: "matched-pair",
-    caption: "Matched pair. Both traces stay white when they are in step.",
-    render: () => renderBoard(MatchedPairBoard()),
-    width: 28,
-    height: 8,
-  },
-  {
-    name: "load-end-meander",
-    caption: "Load-end meander. Red and blue fade back to white near the load.",
-    render: () => renderBoard(LoadEndMeanderBoard()),
-    width: 28,
-    height: 9,
-  },
-  {
-    name: "local-compensation",
-    caption:
-      "Local compensation. The upper pair returns to white while the lower pair holds its skew.",
-    render: () => renderBoard(LocalCompensationBoard()),
-    width: 28,
-    height: 11,
-  },
-  {
-    name: "layer-change",
-    caption:
-      "Layer change. Skew carries through the vias and the drills stay visible.",
-    render: () => renderBoard(LayerChangeBoard()),
-    width: 28,
-    height: 9,
-  },
-  {
-    name: "kicad-forum",
-    caption:
-      "KiCad forum board. The upper pair changes polarity and realigns at the load.",
-    render: renderForumExampleBoard,
-    width: 22,
-    height: 12,
-  },
-]
 
 const root = fileURLToPath(new URL("../", import.meta.url))
 const server = await createServer({
@@ -799,82 +749,6 @@ try {
   assert.deepEqual(pixel(throughPad.png, 280, 300), layerColors.top)
   assert.deepEqual(pixel(throughPad.png, 520, 300), layerColors.bottom)
   await snapshot("through-pad-trace")
-  for (const fixture of phaseSkewCases) {
-    const pixelsPerMm = 24
-    const width = (fixture.width + 2) * pixelsPerMm
-    const height = (fixture.height + 2) * pixelsPerMm
-    const { scene } = prepareComparison({
-      width,
-      height,
-      elements: fixture.render(),
-      matrix: {
-        a: pixelsPerMm,
-        b: 0,
-        c: 0,
-        d: -pixelsPerMm,
-        e: width / 2,
-        f: height / 2,
-      },
-      contextTransform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
-      options: {},
-    })
-    assert(scene)
-    const gpu = await page.evaluate(
-      async ({ elements, width, height, transform }) => {
-        const drawer = window.gpuTest.drawer
-        const canvas = document.querySelector("canvas")!
-        const originalWidth = canvas.width
-        const originalHeight = canvas.height
-        canvas.width = width
-        canvas.height = height
-        drawer.drawElements(elements as unknown as CircuitJson, {
-          transform,
-          showDifferentialPairPhaseSkew: true,
-          hiddenLayerOpacity: 1,
-          background: [0, 0, 0, 1],
-        })
-        await drawer.flush()
-        const png = canvas.toDataURL("image/png").split(",")[1]
-        canvas.width = originalWidth
-        canvas.height = originalHeight
-        return png
-      },
-      scene,
-    )
-    const svg = convertCircuitJsonToPcbSvg(
-      scene.elements as Parameters<typeof convertCircuitJsonToPcbSvg>[0],
-      {
-        width: scene.width,
-        height: scene.height,
-        viewport: scene.viewport,
-        showDifferentialPairPhaseSkew: true,
-        showSolderMask: false,
-        shouldDrawErrors: false,
-        shouldDrawRatsNest: false,
-        includeVersion: false,
-        backgroundColor: scene.background,
-        colorOverrides: { boardOutline: "#d0d2cd" },
-      },
-    )
-    assert(
-      svg.includes('data-type="pcb_differential_pair_phase_skew"'),
-      fixture.name,
-    )
-    const key = `phase-skew-${fixture.name}`
-    assert(
-      (
-        await featureSnapshot(
-          key,
-          PNG.sync.read(await renderSvg(svg)),
-          PNG.sync.read(Buffer.from(gpu, "base64")),
-          key,
-          fixture.caption,
-        )
-      ).pass,
-      `${key} SVG/WebGPU comparison snapshot`,
-    )
-    console.log(`snapshot ${key} (circuit-to-svg / circuit-json-webgpu)`)
-  }
   const { scene: pcbBendScene } = prepareComparison({
     width: 800,
     height: 600,
@@ -1153,12 +1027,7 @@ try {
     errors.filter((e) => !e.includes("404")),
     [],
   )
-  const report = {
-    snapshots: names.length + 4 + phaseSkewCases.length,
-    adapter,
-    large,
-    navigation,
-  }
+  const report = { snapshots: names.length + 4, adapter, large, navigation }
   await writeFile(
     new URL("./actual/report.json", import.meta.url),
     JSON.stringify(report, null, 2),

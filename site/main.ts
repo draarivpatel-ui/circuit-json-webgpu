@@ -34,6 +34,10 @@ const defaultOptions: RenderOptions = {
   xRayElementIds: [],
   background: [0, 0, 0, 1],
 }
+async function captureFrame() {
+  await drawer.flush()
+  return canvas.toDataURL("image/png").split(",")[1]
+}
 async function renderFixture(name: string) {
   const fixture = fixtures[name] ?? xRayFixtures[name]
   if (!fixture) throw new Error(`Unknown fixture ${name}`)
@@ -85,6 +89,7 @@ select.onchange = () => {
 }
 Object.assign(window, {
   gpuTest: {
+    captureFrame,
     renderFixture,
     checkBoardVisibility,
     checkXRay,
@@ -106,6 +111,7 @@ await renderFixture(select.value)
 declare global {
   interface Window {
     gpuTest: {
+      captureFrame: typeof captureFrame
       checkBoardVisibility: typeof checkBoardVisibility
       checkXRay: typeof checkXRay
       checkCopperPourOpacity: typeof checkCopperPourOpacity

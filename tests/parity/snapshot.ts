@@ -9,8 +9,23 @@ export async function featureSnapshot(
   svg: PNG,
   gpu: PNG,
   key: string,
-  caption?: string,
 ) {
+  return compareFeatureSnapshot({ id, svg, gpu, key })
+}
+
+export async function compareFeatureSnapshot({
+  id,
+  svg,
+  gpu,
+  key,
+  caption,
+}: {
+  id: string
+  svg: PNG
+  gpu: PNG
+  key: string
+  caption?: string
+}) {
   const headerHeight = caption ? 54 : 32
   const escapedCaption = caption
     ?.replaceAll("&", "&amp;")
