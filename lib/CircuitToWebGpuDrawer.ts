@@ -351,31 +351,7 @@ export class CircuitToWebGpuDrawer {
     const xRayIds = o.xRayElementIds ?? []
     const xRayActive = xRayIds.length > 0
     const showPhaseSkew = o.showDifferentialPairPhaseSkew && !xRayActive
-    if (showPhaseSkew && this.circuit) {
-      const colors = o.phaseSkewColors
-      const colorKey = JSON.stringify([
-        colors?.positive,
-        colors?.negative,
-        colors?.zero,
-        colors?.unknown,
-      ])
-      if (colorKey !== this.phaseSkewColorKey) {
-        const strokes = getDifferentialPairPhaseSkewStrokes([...this.circuit], {
-          colors,
-        })
-        if (strokes.length) {
-          this.phaseSkewRenderer ??= new LayerStrokeRenderer({
-            device: this.device,
-            cameraUniformBuffer: this.uniform,
-            sampleCount: this.config.sampleCount ?? 4,
-            blend: over,
-          })
-        }
-        if (this.phaseSkewRenderer?.setStrokes(strokes))
-          this.stats.phaseSkewUploads++
-        this.phaseSkewColorKey = colorKey
-      }
-    }
+    if (showPhaseSkew) this.updatePhaseSkewStrokes(o)
     if (xRayActive)
       this.device.queue.writeBuffer(
         this.xRayUniform,
@@ -530,6 +506,33 @@ export class CircuitToWebGpuDrawer {
     pass.end()
     this.device.queue.submit([encoder.finish()])
     this.stats.frames++
+  }
+
+  private updatePhaseSkewStrokes({
+    phaseSkewColors,
+  }: Pick<RenderOptions, "phaseSkewColors">) {
+    if (!this.circuit) return
+    const phaseSkewColorKey = JSON.stringify([
+      phaseSkewColors?.positive,
+      phaseSkewColors?.negative,
+      phaseSkewColors?.zero,
+      phaseSkewColors?.unknown,
+    ])
+    if (phaseSkewColorKey === this.phaseSkewColorKey) return
+    const strokes = getDifferentialPairPhaseSkewStrokes([...this.circuit], {
+      colors: phaseSkewColors,
+    })
+    if (strokes.length) {
+      this.phaseSkewRenderer ??= new LayerStrokeRenderer({
+        device: this.device,
+        cameraUniformBuffer: this.uniform,
+        sampleCount: this.config.sampleCount ?? 4,
+        blend: over,
+      })
+    }
+    if (this.phaseSkewRenderer?.setStrokes({ strokes }))
+      this.stats.phaseSkewUploads++
+    this.phaseSkewColorKey = phaseSkewColorKey
   }
 
   async flush() {
