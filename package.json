@@ -51,7 +51,7 @@
     "@types/earcut": "^3.0.0",
     "@types/pngjs": "^6.0.5",
     "@webgpu/types": "^0.1.64",
-    "circuit-json": "0.0.561",
+    "circuit-json": "^0.0.561",
     "pixelmatch": "^7.1.0",
     "playwright": "1.63.0",
     "pngjs": "^7.0.0",
@@ -71,11 +71,9 @@
     "transformation-matrix": "^3.1.0",
     "circuit-to-canvas": "github:tscircuit/circuit-to-canvas#fa8405c67634e287b79a1506eedde077ef6accb0",
     "@tscircuit/core": "0.0.2217",
-    "@tscircuit/props": "0.0.712",
     "@types/react": "19.1.12",
     "react": "19.1.0",
     "tscircuit": "0.0.3031",
-    "tscircuit-phase-skew-fixtures": "npm:tscircuit@0.0.3285",
     "@tscircuit/circuit-json-util-reference": "npm:@tscircuit/circuit-json-util@0.0.99"
   },
   "overrides": {

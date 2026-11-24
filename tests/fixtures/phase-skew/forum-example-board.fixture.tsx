@@ -1,6 +1,6 @@
 import type { CircuitJson, Point } from "circuit-json"
 import type { ReactElement } from "react"
-import { Circuit } from "tscircuit-phase-skew-fixtures"
+import { Circuit } from "tscircuit"
 
 export const FORUM_BOARD_WIDTH_MM = 22
 export const FORUM_BOARD_HEIGHT_MM = 12
